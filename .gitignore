@@ -9,3 +9,5 @@ vendor/psc.mjs
 vendor/client-core.mjs
 vendor/key-vault.mjs
 vendor/vault-v1-vectors.json
+
+vendor/dataops.mjs

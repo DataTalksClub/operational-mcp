@@ -1,0 +1,1005 @@
+{
+  "version": 1,
+  "namespace": "dataops",
+  "description": "Manage DataOps work through its CLI.",
+  "commands": [
+    {
+      "path": [
+        "tasks",
+        "list"
+      ],
+      "description": "List work tasks",
+      "read": true,
+      "destructive": false,
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "mine": {
+            "type": "boolean"
+          },
+          "owner": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "status": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "date": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "from": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "to": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "card": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "requires": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "can-do": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          }
+        },
+        "required": []
+      },
+      "positional": [],
+      "flags": {
+        "mine": {
+          "field": "mine",
+          "kind": "boolean"
+        },
+        "owner": {
+          "field": "owner",
+          "kind": "value"
+        },
+        "status": {
+          "field": "status",
+          "kind": "value"
+        },
+        "date": {
+          "field": "date",
+          "kind": "value"
+        },
+        "from": {
+          "field": "from",
+          "kind": "value"
+        },
+        "to": {
+          "field": "to",
+          "kind": "value"
+        },
+        "card": {
+          "field": "card",
+          "kind": "value"
+        },
+        "requires": {
+          "field": "requires",
+          "kind": "value"
+        },
+        "can-do": {
+          "field": "can-do",
+          "kind": "value"
+        }
+      }
+    },
+    {
+      "path": [
+        "tasks",
+        "show"
+      ],
+      "description": "Read a task",
+      "read": true,
+      "destructive": false,
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
+      "positional": [
+        "id"
+      ],
+      "flags": {}
+    },
+    {
+      "path": [
+        "tasks",
+        "create"
+      ],
+      "description": "Create a task",
+      "read": false,
+      "destructive": false,
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "description": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "date": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "card": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "assignee": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "comment": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "link": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "tags": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          }
+        },
+        "required": [
+          "description"
+        ]
+      },
+      "positional": [],
+      "flags": {
+        "description": {
+          "field": "description",
+          "kind": "value"
+        },
+        "date": {
+          "field": "date",
+          "kind": "value"
+        },
+        "card": {
+          "field": "card",
+          "kind": "value"
+        },
+        "assignee": {
+          "field": "assignee",
+          "kind": "value"
+        },
+        "comment": {
+          "field": "comment",
+          "kind": "value"
+        },
+        "link": {
+          "field": "link",
+          "kind": "value"
+        },
+        "tags": {
+          "field": "tags",
+          "kind": "value"
+        }
+      }
+    },
+    {
+      "path": [
+        "tasks",
+        "update"
+      ],
+      "description": "Update a task",
+      "read": false,
+      "destructive": false,
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+          },
+          "description": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "date": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "comment": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "link": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "tags": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "card": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "expected-version": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
+      "positional": [
+        "id"
+      ],
+      "flags": {
+        "description": {
+          "field": "description",
+          "kind": "value"
+        },
+        "date": {
+          "field": "date",
+          "kind": "value"
+        },
+        "comment": {
+          "field": "comment",
+          "kind": "value"
+        },
+        "link": {
+          "field": "link",
+          "kind": "value"
+        },
+        "tags": {
+          "field": "tags",
+          "kind": "value"
+        },
+        "card": {
+          "field": "card",
+          "kind": "value"
+        },
+        "expected-version": {
+          "field": "expected-version",
+          "kind": "value"
+        }
+      }
+    },
+    {
+      "path": [
+        "tasks",
+        "done"
+      ],
+      "description": "Complete a task with proof",
+      "read": false,
+      "destructive": false,
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+          },
+          "link": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "comment": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "external-status": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "expected-version": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
+      "positional": [
+        "id"
+      ],
+      "flags": {
+        "link": {
+          "field": "link",
+          "kind": "value"
+        },
+        "comment": {
+          "field": "comment",
+          "kind": "value"
+        },
+        "external-status": {
+          "field": "external-status",
+          "kind": "value"
+        },
+        "expected-version": {
+          "field": "expected-version",
+          "kind": "value"
+        }
+      }
+    },
+    {
+      "path": [
+        "tasks",
+        "reopen"
+      ],
+      "description": "Reopen a task",
+      "read": false,
+      "destructive": false,
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
+      "positional": [
+        "id"
+      ],
+      "flags": {}
+    },
+    {
+      "path": [
+        "tasks",
+        "skip"
+      ],
+      "description": "Skip a task with a reason",
+      "read": false,
+      "destructive": false,
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          }
+        },
+        "required": [
+          "id",
+          "reason"
+        ]
+      },
+      "positional": [
+        "id"
+      ],
+      "flags": {
+        "reason": {
+          "field": "reason",
+          "kind": "value"
+        }
+      }
+    },
+    {
+      "path": [
+        "tasks",
+        "delete"
+      ],
+      "description": "Delete a task",
+      "read": false,
+      "destructive": true,
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
+      "positional": [
+        "id"
+      ],
+      "flags": {}
+    },
+    {
+      "path": [
+        "cards",
+        "list"
+      ],
+      "description": "List work cards",
+      "read": true,
+      "destructive": false,
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "owner": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "mine": {
+            "type": "boolean"
+          },
+          "stage": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "status": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "all": {
+            "type": "boolean"
+          },
+          "limit": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          }
+        },
+        "required": []
+      },
+      "positional": [],
+      "flags": {
+        "owner": {
+          "field": "owner",
+          "kind": "value"
+        },
+        "mine": {
+          "field": "mine",
+          "kind": "boolean"
+        },
+        "stage": {
+          "field": "stage",
+          "kind": "value"
+        },
+        "status": {
+          "field": "status",
+          "kind": "value"
+        },
+        "all": {
+          "field": "all",
+          "kind": "boolean"
+        },
+        "limit": {
+          "field": "limit",
+          "kind": "value"
+        }
+      }
+    },
+    {
+      "path": [
+        "cards",
+        "show"
+      ],
+      "description": "Read a card",
+      "read": true,
+      "destructive": false,
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
+      "positional": [
+        "id"
+      ],
+      "flags": {}
+    },
+    {
+      "path": [
+        "cards",
+        "create"
+      ],
+      "description": "Create a card",
+      "read": false,
+      "destructive": false,
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "date": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "template": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "stage": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "description": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "owner": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "tags": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          }
+        },
+        "required": [
+          "title",
+          "date"
+        ]
+      },
+      "positional": [],
+      "flags": {
+        "title": {
+          "field": "title",
+          "kind": "value"
+        },
+        "date": {
+          "field": "date",
+          "kind": "value"
+        },
+        "template": {
+          "field": "template",
+          "kind": "value"
+        },
+        "stage": {
+          "field": "stage",
+          "kind": "value"
+        },
+        "description": {
+          "field": "description",
+          "kind": "value"
+        },
+        "owner": {
+          "field": "owner",
+          "kind": "value"
+        },
+        "tags": {
+          "field": "tags",
+          "kind": "value"
+        }
+      }
+    },
+    {
+      "path": [
+        "cards",
+        "update"
+      ],
+      "description": "Update a card",
+      "read": false,
+      "destructive": false,
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "description": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "date": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "owner": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "tags": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "expected-version": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
+      "positional": [
+        "id"
+      ],
+      "flags": {
+        "title": {
+          "field": "title",
+          "kind": "value"
+        },
+        "description": {
+          "field": "description",
+          "kind": "value"
+        },
+        "date": {
+          "field": "date",
+          "kind": "value"
+        },
+        "owner": {
+          "field": "owner",
+          "kind": "value"
+        },
+        "tags": {
+          "field": "tags",
+          "kind": "value"
+        },
+        "expected-version": {
+          "field": "expected-version",
+          "kind": "value"
+        }
+      }
+    },
+    {
+      "path": [
+        "cards",
+        "park"
+      ],
+      "description": "Park a card",
+      "read": false,
+      "destructive": false,
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
+      "positional": [
+        "id"
+      ],
+      "flags": {}
+    },
+    {
+      "path": [
+        "cards",
+        "resume"
+      ],
+      "description": "Resume a card",
+      "read": false,
+      "destructive": false,
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
+      "positional": [
+        "id"
+      ],
+      "flags": {}
+    },
+    {
+      "path": [
+        "cards",
+        "delete"
+      ],
+      "description": "Delete a card and its tasks",
+      "read": false,
+      "destructive": true,
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+          },
+          "yes": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "yes"
+        ]
+      },
+      "positional": [
+        "id"
+      ],
+      "flags": {
+        "yes": {
+          "field": "yes",
+          "kind": "boolean"
+        }
+      }
+    },
+    {
+      "path": [
+        "templates",
+        "list"
+      ],
+      "description": "List reusable templates",
+      "read": true,
+      "destructive": false,
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {},
+        "required": []
+      },
+      "positional": [],
+      "flags": {}
+    },
+    {
+      "path": [
+        "templates",
+        "show"
+      ],
+      "description": "Read a reusable template",
+      "read": true,
+      "destructive": false,
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
+      "positional": [
+        "id"
+      ],
+      "flags": {}
+    },
+    {
+      "path": [
+        "resources",
+        "list"
+      ],
+      "description": "List resource capabilities",
+      "read": true,
+      "destructive": false,
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {},
+        "required": []
+      },
+      "positional": [],
+      "flags": {}
+    },
+    {
+      "path": [
+        "users",
+        "list"
+      ],
+      "description": "List users",
+      "read": true,
+      "destructive": false,
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {},
+        "required": []
+      },
+      "positional": [],
+      "flags": {}
+    },
+    {
+      "path": [
+        "team",
+        "list"
+      ],
+      "description": "List team members",
+      "read": true,
+      "destructive": false,
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {},
+        "required": []
+      },
+      "positional": [],
+      "flags": {}
+    },
+    {
+      "path": [
+        "calendar",
+        "list"
+      ],
+      "description": "List calendar entries",
+      "read": true,
+      "destructive": false,
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "from": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "to": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          }
+        },
+        "required": []
+      },
+      "positional": [],
+      "flags": {
+        "from": {
+          "field": "from",
+          "kind": "value"
+        },
+        "to": {
+          "field": "to",
+          "kind": "value"
+        }
+      }
+    },
+    {
+      "path": [
+        "calendar",
+        "get"
+      ],
+      "description": "Read a calendar entry",
+      "read": true,
+      "destructive": false,
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
+      "positional": [
+        "id"
+      ],
+      "flags": {}
+    },
+    {
+      "path": [
+        "invoices",
+        "list"
+      ],
+      "description": "List invoices",
+      "read": true,
+      "destructive": false,
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {},
+        "required": []
+      },
+      "positional": [],
+      "flags": {}
+    },
+    {
+      "path": [
+        "invoices",
+        "detail"
+      ],
+      "description": "Read an invoice",
+      "read": true,
+      "destructive": false,
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
+      "positional": [
+        "id"
+      ],
+      "flags": {}
+    }
+  ]
+}
