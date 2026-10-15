@@ -1,0 +1,15 @@
+# Security and limits
+
+OAuth connector tokens are separate from upstream device credentials. The server binds authorization codes to the registered client, exact redirect, S256 challenge and MCP resource. Codes expire after one minute and can be exchanged once. Access tokens last up to one hour; refresh grants last at most 30 days and never outlive the upstream session. Refresh rotation detects reuse and revokes the connector grant. Reconnect through device approval when the upstream session expires.
+
+The server checks upstream account validity on every MCP request. Revoking the PocketShell or DataOps device session blocks subsequent tool requests, including when a connector still holds an unexpired local token. Revocation cannot undo an already running host operation. OAuth registration does not authenticate a client brand: the consent screen displays the client name as unverified input and shows its exact callback address.
+
+SQLite values, including upstream credentials and administrator SSH profiles, use AES-256-GCM with record-bound authenticated data. OAuth bearer lookup keys are hashes. The database file is mode 0600 in a service-owned mode-0700 directory. Storage keys come from protected runtime configuration. Each service needs its own key and database. Backups must preserve their pairing.
+
+PocketShell executes the shared `psc` runtime in a separate process and private temporary configuration directory for each call. Credentials, SSH identity and pins use mode-0600 temporary files. The service deletes them after the call. Production places the runtime directory on ephemeral `/run` storage. The existing client enforces public-key SSH authentication, strict independently verified host pins and gateway account ownership. No model tool changes trust or exposes a local shell on the server.
+
+Hosting an SSH client on the gateway adds a credential-bearing service to that machine. Separate Unix users protect MCP credentials from the ordinary gateway process. A root compromise can access them. Keep the runtime unprivileged, deny instance metadata, protect releases from service-user writes and use the existing deployment controls.
+
+MCP requests are capped at 128 KiB; upstream and tool results at 1 MiB. At most eight MCP requests execute concurrently per service. OAuth endpoints allow 60 requests per minute per source and MCP allows 120. PocketShell child calls have a 45-second bound; the gateway proxy has a 55-second bound. Use `start` followed by `status`/`capture` for longer work. Avoid retrying writes until their outcome is known.
+
+The service implements modern Streamable HTTP with JSON responses. It does not expose a separate legacy SSE endpoint or a public stdio process. Clients must support standard discovery, DCR and authorization code with S256 PKCE. Client metadata documents are not advertised; choose automatic registration where a client offers both. An operator can restrict callbacks through configuration. Browser consent is protected by a transaction cookie, same-origin POST and CSRF token. Tool results and terminal output are untrusted data.
