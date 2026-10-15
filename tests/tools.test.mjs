@@ -17,7 +17,7 @@ test('PocketShell rejects local/option injection and passes text only as stdin',
  assert.throws(()=>validateProfile({...profile,hosts:[{name:'local'}]}));
 });
 test('DataOps route guard blocks origin, traversal, credential routes and encoded separators',()=>{
- for(const route of ['https://external.example.com/api/tasks','//external.example.com/api/tasks','/api/../tokens','/api/auth/device','/api/tokens','/api/%2e%2e/tokens','/api/auth%2fdevice','/api/tasks#fragment','/api/./tasks','/api/tasks\\other']) assert.throws(()=>validateRoute(route));
+ for(const route of ['https://external.example.com/api/tasks','//external.example.com/api/tasks','/api/../tokens','/api/auth/device','/api/tokens','/api/%2e%2e/tokens','/api/auth%2fdevice','/api/%61uth/device','/api/%74okens','/api/%2574okens','/api/tasks#fragment','/api/./tasks','/api/tasks\\other']) assert.throws(()=>validateRoute(route));
  assert.equal(validateRoute('/api/tasks?status=open'),'/api/tasks?status=open');
 });
 test('DataOps read/write use the same portal API seam as the CLI',async()=>{

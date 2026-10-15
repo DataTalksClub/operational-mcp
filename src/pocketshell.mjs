@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { execFile } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -66,7 +66,7 @@ export function pocketTools({ store, upstream, runtimeRoot = '/run/pocketshell-m
     },
   };
 }
-export async function executePsc(args, { profile, credential, broker, runtimeRoot, stdin }) {
+export async function executePsc(args, { profile, credential, broker, runtimeRoot, stdin, entrypoint = psc, timeoutMs = 45000 }) {
   await mkdir(runtimeRoot, { recursive: true, mode: 0o700 });
   const dir = await mkdtemp(join(resolve(runtimeRoot), 'call-'));
   try {
@@ -77,14 +77,26 @@ export async function executePsc(args, { profile, credential, broker, runtimeRoo
     await writeFile(join(dir, 'pocketshell/credentials.json'), JSON.stringify({ version: 1, broker_url: broker, access_token: credential.token, token_id: credential.tokenId, expires_at: credential.expiry / 1000, email: credential.identity.email, label: 'PocketShell MCP' }), { mode: 0o600 });
     await writeFile(join(dir, 'pocketshell-tui-client/hosts.json'), JSON.stringify({ version: 1, hosts: profile.hosts.map(x => ({ name: x.name, mode: 'gateway', gateway: { deviceId: x.deviceId, user: x.user, identityFile: key } })) }), { mode: 0o600 });
     return await new Promise((resolveResult, reject) => {
-      const child = execFile(process.execPath, [psc, ...args], {
+      const child = spawn(process.execPath, [entrypoint, ...args], {
         env: { PATH: '/usr/local/bin:/usr/bin:/bin', LANG: 'C.UTF-8', XDG_CONFIG_HOME: dir, XDG_RUNTIME_DIR: join(dir, 'runtime'), POCKETSHELL_BROKER_URL: broker },
-        timeout: 45000, maxBuffer: 1024 * 1024, killSignal: 'SIGKILL',
-      }, (error, stdout) => {
-        // stderr can contain remote output: never forward subprocess diagnostics or secrets.
-        if (error) return reject(new Error('PocketShell operation failed; check host connectivity, SSH authorization and pinned key'));
-        try { resolveResult(JSON.parse(stdout)); } catch { reject(new Error('Invalid PocketShell response')); }
+        detached: true, stdio: ['pipe', 'pipe', 'pipe'],
       });
+      let bytes = 0, failed = false; const output = [];
+      const killGroup = () => { try { process.kill(-child.pid, 'SIGKILL'); } catch { child.kill('SIGKILL'); } };
+      const timer = setTimeout(() => { failed = true; killGroup(); }, timeoutMs); timer.unref();
+      const count = chunk => { bytes += chunk.length; if (bytes > 1024 * 1024) { failed = true; killGroup(); return false; } return true; };
+      child.stdout.on('data', chunk => { if (count(chunk)) output.push(chunk); });
+      // Count and discard diagnostics: never return remote stderr or credential material.
+      child.stderr.on('data', count);
+      child.once('exit', killGroup);
+      child.once('error', () => { clearTimeout(timer); reject(new Error('Could not start PocketShell runtime')); });
+      child.once('close', code => {
+        clearTimeout(timer);
+        if (failed || code !== 0) return reject(new Error('PocketShell operation failed; check host connectivity, SSH authorization and pinned key'));
+        try { resolveResult(JSON.parse(Buffer.concat(output).toString('utf8'))); }
+        catch { reject(new Error('Invalid PocketShell response')); }
+      });
+      child.stdin.on('error', () => {});
       child.stdin.end(stdin);
     });
   } finally { await rm(dir, { recursive: true, force: true }); }

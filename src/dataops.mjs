@@ -2,7 +2,9 @@ import { z } from 'zod';
 export function validateRoute(value) {
   if (typeof value !== 'string' || value.length > 4096 || !/^\/(api(?:\/|$)|docs(?:\/|$)|search(?:\?|$)|knowledge(?:\/|$))/.test(value) || /[\\\x00-\x20\x7f#]/.test(value) || /%(?:2f|5c|2e|00)/i.test(value)) throw new Error('Invalid portal route');
   const target = new URL(value, 'https://portal.example.com');
-  if (target.origin !== 'https://portal.example.com' || target.pathname !== value.split('?')[0] || /\/(?:auth|tokens)(?:\/|$)/.test(target.pathname)) throw new Error('Auth routes, traversal and external URLs are not tools');
+  const decoded = decodeURIComponent(target.pathname);
+  if (decoded.includes('%') || /[\\\x00-\x20\x7f]/.test(decoded) || decoded.split('/').some(x => x === '.' || x === '..')) throw new Error('Encoded traversal refused');
+  if (target.origin !== 'https://portal.example.com' || target.pathname !== value.split('?')[0] || /\/(?:auth|tokens)(?:\/|$)/.test(decoded)) throw new Error('Auth routes, traversal and external URLs are not tools');
   return value;
 }
 const route = z.string().refine(x => { try { validateRoute(x); return true; } catch { return false; } }, 'Use an allowed portal route without auth, tokens, traversal or external URLs');
