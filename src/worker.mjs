@@ -16,12 +16,13 @@ export function sandboxCommand(command, args, { directory, mounts = [], sandbox 
   argv.push('--proc', '/proc', '--dev', '/dev', '--tmpfs', '/tmp', '--bind', directory, directory, '--chdir', directory, '--', command, ...args);
   return { command: '/usr/bin/bwrap', args: argv };
 }
-export async function runWorker({ command, prefix = [], argv, runtimeRoot, mounts, files = {}, environment = {}, secretValues = [], timeoutMs, maxOutputBytes, output, launch = sandboxCommand }) {
+export async function runWorker({ command, prefix = [], argv, runtimeRoot, mounts, files = {}, environment = {}, secretValues = [], timeoutMs, maxOutputBytes, output, signal, launch = sandboxCommand }) {
   await mkdir(runtimeRoot, { recursive: true, mode: 0o700 });
   const directory = await mkdtemp(join(resolve(runtimeRoot), 'worker-'));
   try {
     for (const [name, body] of Object.entries(files)) {
-      if (!/^[a-zA-Z0-9_.-]+$/.test(name)) throw new Error('Unsafe credential filename');
+      if (!/^[a-zA-Z0-9_-]+(?:\/[a-zA-Z0-9_.-]+)?$/.test(name) && !/^[a-zA-Z0-9_-]+\.json$/.test(name)) throw new Error('Unsafe credential filename');
+      if (name.includes('/')) await mkdir(join(directory, name.split('/')[0]), {mode:0o700});
       await writeFile(join(directory, name), body, { mode: 0o600, flag: 'wx' });
     }
     const env = { PATH: '/usr/local/bin:/usr/bin:/bin', LANG: 'C.UTF-8', HOME: directory, XDG_CONFIG_HOME: directory, ...environment };
@@ -34,13 +35,15 @@ export async function runWorker({ command, prefix = [], argv, runtimeRoot, mount
       const child = spawn(target.command, target.args, { env, cwd: directory, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
       let count = 0, failed = false; const chunks = [];
       const stop = () => { try { process.kill(-child.pid, 'SIGKILL'); } catch { child.kill('SIGKILL'); } };
-      const timer = setTimeout(() => { failed = true; stop(); }, timeoutMs); timer.unref();
+      const abort = () => {failed=true;stop();};
+      signal?.addEventListener('abort',abort,{once:true}); if(signal?.aborted) abort();
+      const timer = setTimeout(abort, timeoutMs); timer.unref();
       const bounded = data => { count += data.length; if (count > maxOutputBytes) { failed = true; stop(); return false; } return true; };
       child.stdout.on('data', data => { if (bounded(data)) chunks.push(data); }); child.stderr.on('data', bounded);
       child.once('exit', stop);
-      child.once('error', () => { clearTimeout(timer); reject(new Error('Worker unavailable')); });
+      child.once('error', () => { clearTimeout(timer); signal?.removeEventListener('abort',abort); reject(new Error('Worker unavailable')); });
       child.once('close', code => {
-        clearTimeout(timer);
+        clearTimeout(timer); signal?.removeEventListener('abort',abort);
         if (failed || code !== 0) return reject(new Error('CLI operation failed; inspect connection and command help before retrying'));
         const text = Buffer.concat(chunks).toString('utf8');
         if (secretValues.some(value => value && text.includes(value))) return reject(new Error('Credential output refused'));

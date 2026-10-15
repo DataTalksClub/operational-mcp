@@ -3,26 +3,39 @@ import { join } from 'node:path';
 import { Store } from './store.mjs';
 import { pocketUpstream, dataopsUpstream } from './upstream.mjs';
 import { pocketTools } from './pocketshell.mjs';
-import { dataopsTools } from './dataops.mjs';
+import { gatewayTools } from './registry.mjs';
+import { pocketRegistration, dataopsRegistration } from './adapters.mjs';
+import { loadCliRegistrations } from './plugins.mjs';
+import { executePsc } from './pocketshell.mjs';
 import { createApp } from './app.mjs';
 import { VaultSessions, vaultSource, DEFAULT_VAULT_TTL, DEFAULT_VAULT_IDLE, assertVaultProcessSafe, assertDedicatedVaultOrigin } from './vault.mjs';
 process.umask(0o077);
-const kind = process.env.MCP_SERVICE || 'pocketshell';
-if (!['pocketshell','dataops'].includes(kind)) throw new Error('Unknown MCP_SERVICE');
+const kind = 'gateway';
+if (process.env.MCP_SERVICE && !['gateway','pocketshell'].includes(process.env.MCP_SERVICE)) throw new Error('Use one gateway and register this CLI instead of running a separate service');
 const state = process.env.MCP_STATE_DIR || '/var/lib/pocketshell-mcp';
 const storageKey = process.env.MCP_STORAGE_KEY_FILE ? readFileSync(process.env.MCP_STORAGE_KEY_FILE, 'utf8').trim() : process.env.MCP_STORAGE_KEY;
 const store = new Store(join(state, 'oauth.sqlite'), storageKey);
 const remoteConfig = { base: process.env.MCP_UPSTREAM_ORIGIN, webOrigin: process.env.MCP_WEB_ORIGIN, gatewayOrigin: process.env.MCP_GATEWAY_ORIGIN };
-const remote = kind === 'pocketshell'
-  ? pocketUpstream({ ...remoteConfig, core: await import('../vendor/client-core.mjs') })
-  : dataopsUpstream(remoteConfig);
+const remote = pocketUpstream({ ...remoteConfig, core: await import('../vendor/client-core.mjs') });
 // Opt-in: SSH keys come from the user's vault, unlocked at consent and held only in memory.
-const vaultEnabled = kind === 'pocketshell' && ['1', 'on', 'true'].includes((process.env.MCP_VAULT || '').toLowerCase());
+const vaultEnabled = ['1', 'on', 'true'].includes((process.env.MCP_VAULT || '').toLowerCase());
 if (vaultEnabled) { assertVaultProcessSafe(); assertDedicatedVaultOrigin(process.env.MCP_ISSUER, process.env.MCP_VAULT_DEDICATED_ORIGIN); }
 const sessions = vaultEnabled ? new VaultSessions({ ttlSeconds: Number(process.env.MCP_VAULT_TTL_SECONDS || DEFAULT_VAULT_TTL), idleSeconds: Number(process.env.MCP_VAULT_IDLE_SECONDS || DEFAULT_VAULT_IDLE) }) : null;
 const vault = sessions && { sessions, source: vaultSource({ base: remote.base }), hosts: credential => store.get('profile', credential.identity.id)?.hosts.map(h => h.name) || [], resetUrl: new URL('/keys?reset=1', remoteConfig.webOrigin).href };
-const tools = kind === 'pocketshell' ? pocketTools({ store, upstream: remote, vault: sessions }) : dataopsTools({ upstream: remote });
-const app = createApp({ store, upstream: remote, tools, vault, issuer: process.env.MCP_ISSUER,
+const runtimeRoot = process.env.MCP_RUNTIME_DIR || '/run/pocketshell-mcp';
+const registrations = [pocketRegistration(pocketTools({store,upstream:remote,vault:sessions,runtimeRoot,
+  execute:(args,options)=>executePsc(args,{...options,sandbox:true})}))];
+const connections = [];
+if (process.env.MCP_DATAOPS_ORIGIN) {
+  const dataops = dataopsUpstream({base:process.env.MCP_DATAOPS_ORIGIN,webOrigin:process.env.MCP_DATAOPS_WEB_ORIGIN || process.env.MCP_DATAOPS_ORIGIN});
+  registrations.push(dataopsRegistration({entrypoint:process.env.MCP_DATAOPS_ENTRYPOINT || new URL('../vendor/dataops.mjs',import.meta.url).pathname,upstream:dataops,runtimeRoot}));
+  connections.push({name:'dataops',auth:dataops});
+}
+for (const registration of loadCliRegistrations(process.env.MCP_CLI_CONFIG_FILE, {runtimeRoot})) {
+  registrations.push(registration); connections.push({name:registration.manifest.namespace,auth:registration.auth});
+}
+const tools = gatewayTools(registrations);
+const app = createApp({ store, upstream: {...remote,kind:'gateway'}, tools, connections, vault, issuer: process.env.MCP_ISSUER,
   allowedEmails: (process.env.MCP_ALLOWED_EMAILS || '').split(',').map(x=>x.trim().toLowerCase()).filter(Boolean),
   redirectUris: (process.env.MCP_REDIRECT_URIS || '').split(',').map(x=>x.trim()).filter(Boolean),
 });

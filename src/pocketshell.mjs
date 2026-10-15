@@ -1,4 +1,6 @@
 import { z } from 'zod';
+import { sandboxCommand } from './worker.mjs';
+import { dirname } from 'node:path';
 import { spawn } from 'node:child_process';
 import { mkdtemp, mkdir, writeFile, rm, access } from 'node:fs/promises';
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -107,7 +109,7 @@ export async function vaultAgent(dir, key, timeoutMs) {
     return { socket, publicFile, stop };
   } catch (error) { stop(); throw new Error('Could not load the vault key into the SSH agent', { cause: error }); }
 }
-export async function executePsc(args, { profile, credential, broker, gateway, runtimeRoot, stdin, vaultKey, entrypoint = psc, timeoutMs = 45000 }) {
+export async function executePsc(args, { profile, credential, broker, gateway, runtimeRoot, stdin, vaultKey, entrypoint = psc, timeoutMs = 45000, sandbox = false }) {
   const gatewayUrl = new URL(gateway);
   if (gatewayUrl.protocol !== 'https:' || gatewayUrl.origin !== gateway) throw new Error('A configured HTTPS gateway origin is required');
   await mkdir(runtimeRoot, { recursive: true, mode: 0o700 });
@@ -122,7 +124,8 @@ export async function executePsc(args, { profile, credential, broker, gateway, r
     await writeFile(join(dir, 'pocketshell/credentials.json'), JSON.stringify({ version: 1, broker_url: broker, access_token: credential.token, token_id: credential.tokenId, expires_at: credential.expiry / 1000, email: credential.identity.email, label: 'PocketShell MCP' }), { mode: 0o600 });
     await writeFile(join(dir, 'pocketshell-tui-client/hosts.json'), JSON.stringify({ version: 1, hosts: profile.hosts.map(x => ({ name: x.name, mode: 'gateway', gateway: { deviceId: x.deviceId, user: x.user, identityFile: key, server: gateway.replace(/^https:/, 'wss:') } })) }), { mode: 0o600 });
     return await new Promise((resolveResult, reject) => {
-      const child = spawn(process.execPath, [entrypoint, ...args], {
+      const target = sandbox ? sandboxCommand(process.execPath,[entrypoint,...args],{directory:dir,mounts:[dirname(entrypoint)]}) : {command:process.execPath,args:[entrypoint,...args]};
+      const child = spawn(target.command, target.args, {
         env: { PATH, LANG: 'C.UTF-8', XDG_CONFIG_HOME: dir, XDG_RUNTIME_DIR: join(dir, 'runtime'), POCKETSHELL_BROKER_URL: broker, ...(agent ? { SSH_AUTH_SOCK: agent.socket } : {}) },
         detached: true, stdio: ['pipe', 'pipe', 'pipe'],
       });
