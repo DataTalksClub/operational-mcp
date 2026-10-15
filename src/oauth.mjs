@@ -16,16 +16,20 @@ const equal = (a, b) => typeof a === 'string' && typeof b === 'string' && Buffer
 const html = value => String(value).replace(/[&<>"']/g, x => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' })[x]);
 const fail = (res, code = 'invalid_request', status = 400) => res.status(status).json({ error: code });
 
-export function installOAuth(app, { store, issuer, upstream, allowedEmails, redirectUris }) {
+export function installOAuth(app, { store, issuer, upstream, allowedEmails, redirectUris, rootApp = app }) {
   const resource = `${issuer}/mcp`;
+  const issuerUrl = new URL(issuer);
+  const origin = issuerUrl.origin;
+  const prefix = issuerUrl.pathname.replace(/\/$/, '');
+  const metadataUrl = `${origin}/.well-known/oauth-protected-resource${prefix}/mcp`;
   const redirectAllowed = uri => validRedirect(uri) && (!redirectUris.length || redirectUris.includes(uri));
-  const cookieName = 'mcp_tx';
+  const cookieName = `mcp_tx_${digest(issuer).slice(0, 8)}`;
   const scope = 'mcp:tools';
   const limiter = rateLimit({ windowMs: 60000, limit: 60, standardHeaders: 'draft-8', legacyHeaders: false });
   app.use('/oauth', limiter);
-  app.get(['/.well-known/oauth-protected-resource', '/.well-known/oauth-protected-resource/mcp'], (_req, res) => res.json({ resource, authorization_servers: [issuer], scopes_supported: [scope], bearer_methods_supported: ['header'] }));
-  app.get('/.well-known/oauth-authorization-server', (_req, res) => res.json({ issuer, authorization_endpoint: `${issuer}/oauth/authorize`, token_endpoint: `${issuer}/oauth/token`, registration_endpoint: `${issuer}/oauth/register`, revocation_endpoint: `${issuer}/oauth/revoke`, scopes_supported: [scope], response_types_supported: ['code'], grant_types_supported: ['authorization_code', 'refresh_token'], code_challenge_methods_supported: ['S256'], token_endpoint_auth_methods_supported: ['none'], authorization_response_iss_parameter_supported: true }));
-  const challenge = (res) => res.set('WWW-Authenticate', `Bearer resource_metadata="${issuer}/.well-known/oauth-protected-resource", scope="${scope}"`).status(401).json({ error: 'invalid_token' });
+  rootApp.get([`/.well-known/oauth-protected-resource${prefix}`, `/.well-known/oauth-protected-resource${prefix}/mcp`], (_req, res) => res.json({ resource, authorization_servers: [issuer], scopes_supported: [scope], bearer_methods_supported: ['header'] }));
+  rootApp.get(`/.well-known/oauth-authorization-server${prefix}`, (_req, res) => res.json({ issuer, authorization_endpoint: `${issuer}/oauth/authorize`, token_endpoint: `${issuer}/oauth/token`, registration_endpoint: `${issuer}/oauth/register`, revocation_endpoint: `${issuer}/oauth/revoke`, scopes_supported: [scope], response_types_supported: ['code'], grant_types_supported: ['authorization_code', 'refresh_token'], code_challenge_methods_supported: ['S256'], token_endpoint_auth_methods_supported: ['none'], authorization_response_iss_parameter_supported: true }));
+  const challenge = (res) => res.set('WWW-Authenticate', `Bearer resource_metadata="${metadataUrl}", scope="${scope}"`).status(401).json({ error: 'invalid_token' });
   const page = (res, body) => res.type('html').send(`<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>${upstream.kind} connection</title><body><main><h1>Connect ${html(upstream.kind)}</h1>${body}</main></body></html>`);
   const transaction = req => {
     const cookies = Object.fromEntries((req.headers.cookie || '').split(';').map(x => x.trim().split('=')));
@@ -33,7 +37,7 @@ export function installOAuth(app, { store, issuer, upstream, allowedEmails, redi
   };
   function csrf(req) {
     const tx = transaction(req);
-    return tx && req.get('origin') === issuer && equal(req.body?.csrf, tx.csrf) ? tx : null;
+    return tx && req.get('origin') === origin && equal(req.body?.csrf, tx.csrf) ? tx : null;
   }
   function saveTx(tx) { store.put('transaction', tx.id, tx, tx.expiry); }
   app.post('/oauth/register', (req, res) => {
@@ -54,8 +58,8 @@ export function installOAuth(app, { store, issuer, upstream, allowedEmails, redi
     const nonce = secret();
     const tx = { id: digest(nonce), csrf: secret(), clientId: client.client_id, redirect: q.redirect_uri, state: q.state, challenge: q.code_challenge, resource, scope, expiry: Date.now() + 600000, phase: 'consent' };
     saveTx(tx);
-    res.cookie(cookieName, nonce, { httpOnly: true, secure: issuer.startsWith('https:'), sameSite: 'lax', path: '/oauth', maxAge: 600000 });
-    page(res, `<p>Client: ${html(client.client_name)}</p><p>Return address: ${html(tx.redirect)}</p><p>This grants all ${html(upstream.kind)} tools, including changes and destructive operations, within your existing account permissions. Approve only a connection you just started.</p><form method="post" action="/oauth/start"><input type="hidden" name="csrf" value="${tx.csrf}"><button>Continue to device approval</button></form>`);
+    res.cookie(cookieName, nonce, { httpOnly: true, secure: issuer.startsWith('https:'), sameSite: 'lax', path: `${prefix}/oauth`, maxAge: 600000 });
+    page(res, `<p>Client: ${html(client.client_name)}</p><p>Return address: ${html(tx.redirect)}</p><p>This grants all ${html(upstream.kind)} tools, including changes and destructive operations, within your existing account permissions. Approve only a connection you just started.</p><form method="post" action="${prefix}/oauth/start"><input type="hidden" name="csrf" value="${tx.csrf}"><button>Continue to device approval</button></form>`);
   });
   app.post('/oauth/start', async (req, res) => {
     const tx = csrf(req);
@@ -65,7 +69,7 @@ export function installOAuth(app, { store, issuer, upstream, allowedEmails, redi
     try {
       tx.device = await upstream.start(`${upstream.kind} MCP (${new URL(tx.redirect).hostname})`);
       tx.expiry = Math.min(tx.expiry, tx.device.expiry); tx.nextPoll = 0; tx.phase = 'pending'; saveTx(tx);
-      page(res, `<p>Approve code <strong>${html(tx.device.userCode)}</strong> in ${html(upstream.kind)}.</p><p><a href="${html(tx.device.approval)}" target="_blank" rel="noopener noreferrer">Open device approval</a></p><p>After approving, return here and continue. No token needs to be copied.</p><form method="post" action="/oauth/complete"><input type="hidden" name="csrf" value="${tx.csrf}"><button>Finish connection</button></form>`);
+      page(res, `<p>Approve code <strong>${html(tx.device.userCode)}</strong> in ${html(upstream.kind)}.</p><p><a href="${html(tx.device.approval)}" target="_blank" rel="noopener noreferrer">Open device approval</a></p><p>After approving, return here and continue. No token needs to be copied.</p><form method="post" action="${prefix}/oauth/complete"><input type="hidden" name="csrf" value="${tx.csrf}"><button>Finish connection</button></form>`);
     } catch { store.delete('transaction', tx.id); fail(res, 'temporarily_unavailable', 503); }
   });
   app.post('/oauth/complete', async (req, res) => {
@@ -86,12 +90,12 @@ export function installOAuth(app, { store, issuer, upstream, allowedEmails, redi
         store.delete('transaction', tx.id);
       });
       const target = new URL(tx.redirect); target.searchParams.set('code', code); if (tx.state !== undefined) target.searchParams.set('state', tx.state); target.searchParams.set('iss', issuer);
-      res.clearCookie(cookieName, { path: '/oauth' }); res.redirect(303, target.href);
+      res.clearCookie(cookieName, { path: `${prefix}/oauth` }); res.redirect(303, target.href);
     } catch (error) {
       if (error instanceof UpstreamError && ['authorization_pending', 'slow_down'].includes(error.code)) {
         if (error.code === 'slow_down') tx.device.interval = Math.min(60, tx.device.interval + 5);
         tx.phase = 'pending'; tx.nextPoll = Date.now() + tx.device.interval * 1000; saveTx(tx);
-        return page(res, `<p>Approval is still pending. Wait ${tx.device.interval} seconds, approve in the other tab, then continue.</p><form method="post" action="/oauth/complete"><input type="hidden" name="csrf" value="${tx.csrf}"><button>Check approval</button></form>`);
+        return page(res, `<p>Approval is still pending. Wait ${tx.device.interval} seconds, approve in the other tab, then continue.</p><form method="post" action="${prefix}/oauth/complete"><input type="hidden" name="csrf" value="${tx.csrf}"><button>Check approval</button></form>`);
       }
       store.delete('transaction', tx.id); return fail(res, 'access_denied', 403);
     }
