@@ -1,0 +1,8 @@
+node_modules/
+state/
+.env
+*.key
+*.pem
+coverage/
+vendor/psc.mjs
+.build/
