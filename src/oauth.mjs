@@ -5,6 +5,7 @@ import { UpstreamError } from './upstream.mjs';
 import { isIP } from 'node:net';
 import { readFileSync } from 'node:fs';
 import { validateUnlock, VAULT_SLOT } from './vault.mjs';
+import { installLinks } from './links.mjs';
 // The consent page runs @pocketshell/core's keyVault, bundled at a pinned commit by scripts/build-client.mjs.
 function vaultAssets() {
   const read = path => readFileSync(new URL(path, import.meta.url), 'utf8');
@@ -29,7 +30,7 @@ const equal = (a, b) => typeof a === 'string' && typeof b === 'string' && Buffer
 const html = value => String(value).replace(/[&<>"']/g, x => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' })[x]);
 const fail = (res, code = 'invalid_request', status = 400) => res.status(status).json({ error: code });
 
-export function installOAuth(app, { store, issuer, upstream, allowedEmails, redirectUris, rootApp = app, vault = null }) {
+export function installOAuth(app, { store, issuer, upstream, allowedEmails, redirectUris, rootApp = app, vault = null, tools, connections = [] }) {
   const resource = `${issuer}/mcp`;
   const issuerUrl = new URL(issuer);
   const origin = issuerUrl.origin;
@@ -37,12 +38,15 @@ export function installOAuth(app, { store, issuer, upstream, allowedEmails, redi
   const metadataUrl = `${origin}/.well-known/oauth-protected-resource${prefix}/mcp`;
   const redirectAllowed = uri => validRedirect(uri) && (!redirectUris.length || redirectUris.includes(uri));
   const cookieName = `mcp_tx_${digest(issuer).slice(0, 8)}`;
-  const scope = 'mcp:tools';
+  const scope = 'mcp:tools'; // Legacy adapters retain their original grant.
+  const supportedScopes = tools?.scopes || [scope];
+  const readScopes = new Set(tools?.readScopes || [scope]);
+  const validScope = value => typeof value === 'string' && value.length <= 16384 && value.split(' ').every(x => supportedScopes.includes(x));
   const limiter = rateLimit({ windowMs: 60000, limit: 60, standardHeaders: 'draft-8', legacyHeaders: false });
   app.use('/oauth', limiter);
-  rootApp.get([`/.well-known/oauth-protected-resource${prefix}`, `/.well-known/oauth-protected-resource${prefix}/mcp`], (_req, res) => res.json({ resource, authorization_servers: [issuer], scopes_supported: [scope], bearer_methods_supported: ['header'] }));
-  rootApp.get(`/.well-known/oauth-authorization-server${prefix}`, (_req, res) => res.json({ issuer, authorization_endpoint: `${issuer}/oauth/authorize`, token_endpoint: `${issuer}/oauth/token`, registration_endpoint: `${issuer}/oauth/register`, revocation_endpoint: `${issuer}/oauth/revoke`, scopes_supported: [scope], response_types_supported: ['code'], grant_types_supported: ['authorization_code', 'refresh_token'], code_challenge_methods_supported: ['S256'], token_endpoint_auth_methods_supported: ['none'], authorization_response_iss_parameter_supported: true }));
-  const challenge = (res) => res.set('WWW-Authenticate', `Bearer resource_metadata="${metadataUrl}", scope="${scope}"`).status(401).json({ error: 'invalid_token' });
+  rootApp.get([`/.well-known/oauth-protected-resource${prefix}`, `/.well-known/oauth-protected-resource${prefix}/mcp`], (_req, res) => res.json({ resource, authorization_servers: [issuer], scopes_supported: supportedScopes, bearer_methods_supported: ['header'] }));
+  rootApp.get(`/.well-known/oauth-authorization-server${prefix}`, (_req, res) => res.json({ issuer, authorization_endpoint: `${issuer}/oauth/authorize`, token_endpoint: `${issuer}/oauth/token`, registration_endpoint: `${issuer}/oauth/register`, revocation_endpoint: `${issuer}/oauth/revoke`, scopes_supported: supportedScopes, response_types_supported: ['code'], grant_types_supported: ['authorization_code', 'refresh_token'], code_challenge_methods_supported: ['S256'], token_endpoint_auth_methods_supported: ['none'], authorization_response_iss_parameter_supported: true }));
+  const challenge = (res) => res.set('WWW-Authenticate', `Bearer resource_metadata="${metadataUrl}", scope="${supportedScopes.join(' ')}"`).status(401).json({ error: 'invalid_token' });
   const page = (res, body, tx = null, scripts = false) => (tx ? res.set('Content-Security-Policy', consentCsp(tx, scripts)) : res).type('html').send(`<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>${upstream.kind} connection</title><body><main><h1>Connect ${html(upstream.kind)}</h1>${body}</main></body></html>`);
   const txNonce = req => Object.fromEntries((req.headers.cookie || '').split(';').map(x => x.trim().split('=')))[cookieName];
   const transaction = req => { const nonce = txNonce(req); return nonce && store.get('transaction', digest(nonce)); };
@@ -66,20 +70,23 @@ export function installOAuth(app, { store, issuer, upstream, allowedEmails, redi
     const q = req.query;
     const client = typeof q.client_id === 'string' && store.get('client', q.client_id);
     if (!client || typeof q.redirect_uri !== 'string' || !client.redirect_uris.includes(q.redirect_uri) || !redirectAllowed(q.redirect_uri)) return fail(res);
-    if (q.response_type !== 'code' || q.code_challenge_method !== 'S256' || typeof q.code_challenge !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(q.code_challenge) || q.resource !== resource || (q.scope !== undefined && q.scope !== scope) || (q.state !== undefined && (typeof q.state !== 'string' || q.state.length > 2048))) return fail(res);
+    if (q.response_type !== 'code' || q.code_challenge_method !== 'S256' || typeof q.code_challenge !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(q.code_challenge) || q.resource !== resource || (q.scope !== undefined && !validScope(q.scope)) || (q.state !== undefined && (typeof q.state !== 'string' || q.state.length > 2048))) return fail(res);
     const nonce = secret();
-    const tx = { id: digest(nonce), csrf: secret(), clientId: client.client_id, redirect: q.redirect_uri, state: q.state, challenge: q.code_challenge, resource, scope, expiry: Date.now() + 600000, phase: 'consent' };
+    const tx = { id: digest(nonce), csrf: secret(), clientId: client.client_id, clientName: client.client_name, redirect: q.redirect_uri, state: q.state, challenge: q.code_challenge, resource, scope: q.scope || supportedScopes.join(' '), expiry: Date.now() + 600000, phase: 'consent' };
     saveTx(tx);
     txCookie(res, nonce);
-    page(res, `<p>Client: ${html(client.client_name)}</p><p>Return address: ${html(tx.redirect)}</p><p>This grants all ${html(upstream.kind)} tools, including changes and destructive operations, within your existing account permissions, unless you choose read-only. Approve only a connection you just started.</p><form method="post" action="${prefix}/oauth/start"><input type="hidden" name="csrf" value="${tx.csrf}"><p><label><input type="checkbox" name="read_only" value="1"> Read-only: offer only tools that read, and refuse anything that starts, sends, stops or changes data</label></p><button>Continue to device approval</button></form>`);
+    page(res, `<p>Client: ${html(client.client_name)}</p><p>Return address: ${html(tx.redirect)}</p><p>This grants the requested CLI commands within your account permissions. Each CLI tool may contain both reads and writes. Write commands require an approval marker. Choose read-only to refuse every write. Approve only a connection you just started.</p><form method="post" action="${prefix}/oauth/start"><input type="hidden" name="csrf" value="${tx.csrf}"><p><label><input type="checkbox" name="read_only" value="1"> Read-only: offer only tools that read, and refuse anything that starts, sends, stops or changes data</label></p><button>Continue to device approval</button></form>`);
   });
   app.post('/oauth/start', async (req, res) => {
     const tx = csrf(req);
     if (!tx || tx.phase !== 'consent') return fail(res);
     // Persist before awaiting to prevent concurrent starts for the same browser transaction.
-    tx.phase = 'starting'; tx.readOnly = req.body.read_only === '1'; saveTx(tx);
+    tx.phase = 'starting'; tx.readOnly = req.body.read_only === '1';
+    if (tx.readOnly && tools?.scopes) tx.scope = tx.scope.split(' ').filter(x => readScopes.has(x)).join(' ');
+    if (!tx.scope) return fail(res, 'invalid_scope');
+    saveTx(tx);
     try {
-      tx.device = await upstream.start(`${upstream.kind} MCP (${new URL(tx.redirect).hostname})`);
+      tx.device = await upstream.start(`MCP gateway, ${tx.clientName}`);
       tx.expiry = Math.min(tx.expiry, tx.device.expiry); tx.nextPoll = 0; tx.phase = 'pending'; saveTx(tx);
       page(res, `<p>Approve code <strong>${html(tx.device.userCode)}</strong> in ${html(upstream.kind)}.</p><p><a href="${html(tx.device.approval)}" target="_blank" rel="noopener noreferrer">Open device approval</a></p><p>After approving, return here and continue. No token needs to be copied.</p><form method="post" action="${prefix}/oauth/complete"><input type="hidden" name="csrf" value="${tx.csrf}"><button>Finish connection</button></form>`, tx);
     } catch { store.delete('transaction', tx.id); fail(res, 'temporarily_unavailable', 503); }
@@ -94,14 +101,11 @@ export function installOAuth(app, { store, issuer, upstream, allowedEmails, redi
       if (!allowedEmails.includes(credential.identity.email)) {
         await upstream.revoke(credential).catch(() => {}); store.delete('transaction', tx.id); return fail(res, 'access_denied', 403);
       }
-      if (vault) {
-        // Unlock before issuing the code: Argon2id and typing take longer than the code's life.
-        // Device approval may have used most of the window: give the unlock step its own 10 minutes.
-        // If it is abandoned, sweep() revokes this upstream session when the transaction expires.
-        tx.phase = 'unlock'; tx.credential = credential; tx.expiry = Date.now() + 600000; saveTx(tx); txCookie(res, txNonce(req));
-        return unlockPage(res, tx);
+      if (connections.length) {
+        tx.phase = 'link'; tx.credential = credential; tx.expiry = Date.now() + 600000; saveTx(tx); txCookie(res, txNonce(req));
+        return links.show(res, tx);
       }
-      res.clearCookie(cookieName, { path: `${prefix}/oauth` }); res.redirect(303, issue(tx, credential));
+      return finish(req, res, tx, credential);
     } catch (error) {
       if (error instanceof UpstreamError && ['authorization_pending', 'slow_down'].includes(error.code)) {
         if (error.code === 'slow_down') tx.device.interval = Math.min(60, tx.device.interval + 5);
@@ -111,12 +115,32 @@ export function installOAuth(app, { store, issuer, upstream, allowedEmails, redi
       store.delete('transaction', tx.id); return fail(res, 'access_denied', 403);
     }
   });
+  function finish(req, res, tx, credential) {
+    if (vault) {
+      // Unlock before issuing the short-lived code. Linked credentials stay encrypted in tx.
+      tx.phase = 'unlock'; tx.credential = credential; tx.expiry = Date.now() + 600000; saveTx(tx); txCookie(res, txNonce(req));
+      return unlockPage(res, tx);
+    }
+    res.clearCookie(cookieName, { path: `${prefix}/oauth` }); res.redirect(303, issue(tx, credential));
+  }
+  const links = installLinks(app, { connections, csrf, saveTx, page, prefix, fail, finish, issuer });
+  async function revokeCredentials(credential, linked = {}) {
+    const jobs = [];
+    if (credential?.expiry > Date.now()) jobs.push(upstream.revoke(credential));
+    for (const [name, value] of Object.entries(linked)) {
+      const auth = connections.find(c => c.name === name)?.auth;
+      if (auth?.revoke && value.expiry > Date.now()) jobs.push(auth.revoke(value));
+    }
+    const results = await Promise.allSettled(jobs);
+    if (results.some(x => x.status === 'rejected' && !([401,404].includes(x.reason?.status)))) throw new Error('Revocation pending');
+  }
+
   function issue(tx, credential, keys = []) {
     const code = secret();
     const grantId = secret();
     const grantExpiry = Math.min(credential.expiry, Date.now() + 30 * DAY);
     store.transaction(() => {
-      store.put('grant', grantId, { credential, clientId: tx.clientId, resource, scope, revoked: false, readOnly: !!tx.readOnly }, grantExpiry);
+      store.put('grant', grantId, { credential, linked: tx.linked || {}, clientId: tx.clientId, resource, scope: tx.scope, revoked: false, readOnly: !!tx.readOnly }, grantExpiry);
       store.put('code', digest(code), { grantId, clientId: tx.clientId, redirect: tx.redirect, challenge: tx.challenge, resource }, Date.now() + 60000);
       store.delete('transaction', tx.id);
     });
@@ -168,21 +192,21 @@ export function installOAuth(app, { store, issuer, upstream, allowedEmails, redi
   function mint(grantId, grant) {
     const access = secret(); const refresh = secret();
     const expiry = Math.min(grant.credential.expiry, Date.now() + 30 * DAY);
-    store.put('access', digest(access), { grantId, clientId: grant.clientId, resource, scope }, Math.min(expiry, Date.now() + 3600000));
+    store.put('access', digest(access), { grantId, clientId: grant.clientId, resource, scope: grant.scope || scope }, Math.min(expiry, Date.now() + 3600000));
     store.put('refresh', digest(refresh), { grantId, clientId: grant.clientId, resource }, expiry);
-    return { access_token: access, token_type: 'Bearer', expires_in: Math.floor((Math.min(expiry, Date.now() + 3600000) - Date.now()) / 1000), refresh_token: refresh, scope };
+    return { access_token: access, token_type: 'Bearer', expires_in: Math.floor((Math.min(expiry, Date.now() + 3600000) - Date.now()) / 1000), refresh_token: refresh, scope: grant.scope || scope };
   }
   app.post('/oauth/token', (req, res) => {
     const b = req.body || {};
     if (!store.get('client', b.client_id)) return fail(res, 'invalid_client', 401);
-    if (b.resource !== resource || (b.scope !== undefined && b.scope !== scope)) return fail(res, 'invalid_target');
+    if (b.resource !== resource || (b.scope !== undefined && !validScope(b.scope))) return fail(res, 'invalid_target');
     const result = store.transaction(() => {
       if (b.grant_type === 'authorization_code') {
         const key = typeof b.code === 'string' ? digest(b.code) : '';
         const code = store.get('code', key);
         if (!code || code.clientId !== b.client_id || code.redirect !== b.redirect_uri || typeof b.code_verifier !== 'string' || !/^[A-Za-z0-9._~-]{43,128}$/.test(b.code_verifier) || !equal(code.challenge, createHash('sha256').update(b.code_verifier).digest('base64url'))) return null;
         const grant = store.get('grant', code.grantId);
-        if (!grant || grant.revoked) return null;
+        if (!grant || grant.revoked || (b.scope !== undefined && b.scope !== (grant.scope || scope))) return null;
         store.delete('code', key); vault?.sessions.activate(code.grantId); return mint(code.grantId, grant);
       }
       if (b.grant_type === 'refresh_token') {
@@ -190,8 +214,8 @@ export function installOAuth(app, { store, issuer, upstream, allowedEmails, redi
         const token = store.get('refresh', key);
         if (!token || token.clientId !== b.client_id) return null;
         const grant = store.get('grant', token.grantId);
-        if (!grant || grant.revoked) return null;
-        if (token.used) { grant.revoked = true; store.put('grant', token.grantId, grant, grant.credential.expiry); vault?.sessions.drop(token.grantId); return null; }
+        if (!grant || grant.revoked || (b.scope !== undefined && b.scope !== (grant.scope || scope))) return null;
+        if (token.used) { store.put('revoke', token.grantId, {credential:grant.credential,linked:grant.linked,attempts:0}, Date.now()); grant.revoked = true; store.put('grant', token.grantId, grant, grant.credential.expiry); vault?.sessions.drop(token.grantId); return null; }
         store.put('refresh', key, { ...token, used: true }, grant.credential.expiry);
         return mint(token.grantId, grant);
       }
@@ -209,7 +233,7 @@ export function installOAuth(app, { store, issuer, upstream, allowedEmails, redi
       if (grant) {
         grant.revoked = true; store.put('grant', token.grantId, grant, grant.credential.expiry);
         vault?.sessions.drop(token.grantId);
-        await upstream.revoke(grant.credential).catch(() => {});
+        await revokeCredentials(grant.credential, grant.linked).catch(() => { store.put('revoke', token.grantId, {credential:grant.credential, linked:grant.linked, attempts:0}, Date.now()); });
       }
     }
     res.json({});
@@ -217,29 +241,29 @@ export function installOAuth(app, { store, issuer, upstream, allowedEmails, redi
   return {
     resource,
     // Kinds that only sweep() may delete; prune() must skip them.
-    sweptKinds: ['transaction', 'revoke'],
+    sweptKinds: ['transaction', 'revoke', 'grant'],
     // An unlock transaction that expired unused still holds a live upstream device session; revoke it.
     // A failed revoke is queued as an already-expired 'revoke' record and retried on the next sweep
     // until it succeeds or the upstream session expires by itself.
     async sweep() {
-      const pending = [...store.takeExpired('transaction').map(({ id, value }) => ({ id, credential: value.credential, attempts: 0 })),
+      const pending = [...store.takeExpired('grant').map(({id,value})=>({id,credential:value.credential,linked:value.linked,attempts:0})), ...store.takeExpired('transaction').map(({ id, value }) => ({ id, credential: value.credential, linked:value.linked, attempts: 0 })),
         ...store.takeExpired('revoke').map(({ id, value }) => ({ id, ...value }))];
       for (const job of pending) {
-        if (!job.credential || job.credential.expiry <= Date.now()) continue;
-        try { await upstream.revoke(job.credential); }
-        catch { store.put('revoke', job.id, { credential: job.credential, attempts: job.attempts + 1 }, Date.now()); }
+        if (!job.credential) continue;
+        try { await revokeCredentials(job.credential, job.linked); }
+        catch { store.put('revoke', job.id, { credential: job.credential, linked:job.linked, attempts: job.attempts + 1 }, Date.now()); }
       }
     },
     async authenticate(req, res, next) {
       const bearer = /^Bearer ([A-Za-z0-9_-]{43})$/.exec(req.get('authorization') || '')?.[1];
       const token = bearer && store.get('access', digest(bearer));
       const grant = token && store.get('grant', token.grantId);
-      if (!grant || grant.revoked || token.resource !== resource || token.scope !== scope || grant.credential.expiry <= Date.now()) { if (token) vault?.sessions.drop(token.grantId); return challenge(res); }
+      if (!grant || grant.revoked || token.resource !== resource || token.scope !== (grant.scope || scope) || grant.credential.expiry <= Date.now()) { if (token) vault?.sessions.drop(token.grantId); return challenge(res); }
       try {
         // Live validation makes upstream logout / device-session revocation effective immediately.
         const identity = await upstream.identity(grant.credential);
         if (identity.id !== grant.credential.identity.id || !allowedEmails.includes(identity.email)) { vault?.sessions.drop(token.grantId); return challenge(res); }
-        req.credential = grant.credential; req.grantId = token.grantId; req.readOnly = !!grant.readOnly; next();
+        req.credential = grant.credential; req.grantId = token.grantId; req.readOnly = !!grant.readOnly; req.scopes = (grant.scope || scope).split(' '); req.linked = grant.linked || {}; next();
       } catch (error) {
         if (error instanceof UpstreamError && [401,403].includes(error.status)) { vault?.sessions.drop(token.grantId); return challenge(res); }
         return fail(res, 'temporarily_unavailable', 503);

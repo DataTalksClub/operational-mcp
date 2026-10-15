@@ -35,14 +35,14 @@ export function createApp(config) {
     active++;
     const server = new McpServer({ name: `${upstream.kind}-mcp`, version: '0.1.0' });
     // A read-only grant (chosen at consent) is never offered write tools, and the call guard below holds too.
-    for (const tool of tools.definitions.filter(t => t.read || !req.readOnly)) server.registerTool(tool.name, {
+    for (const tool of tools.definitions.filter(t => t.mixed || t.read || !req.readOnly)) server.registerTool(tool.name, {
       description: tool.description, inputSchema: tool.schema,
       annotations: { readOnlyHint: !!tool.read, destructiveHint: !!tool.destructive, idempotentHint: !!tool.read, openWorldHint: true },
-      _meta: { securitySchemes: [{ type: 'oauth2', scopes: ['mcp:tools'] }] },
-    }, async args => {
-      if (req.readOnly && !tool.read) return { isError: true, content: [{ type: 'text', text: 'read-only connection: reconnect without read-only to make changes' }] };
+      _meta: { securitySchemes: [{ type: 'oauth2', scopes: tools.scopes || ['mcp:tools'] }] },
+    }, async (args, extra) => {
+      if (req.readOnly && !tool.read && !tool.mixed) return { isError: true, content: [{ type: 'text', text: 'read-only connection: reconnect without read-only to make changes' }] };
       try {
-        const result = await tools.call(tool.name, args, req.credential, { grantId: req.grantId });
+        const result = await tools.call(tool.name, args, req.credential, { grantId: req.grantId, scopes:req.scopes, readOnly:req.readOnly, linked:req.linked, signal:extra.signal });
         const content = JSON.stringify(result);
         if (Buffer.byteLength(content) > 1024 * 1024) throw new Error('Response too large');
         return { content: [{ type: 'text', text: content }], structuredContent: result && typeof result === 'object' && !Array.isArray(result) ? result : { result } };
