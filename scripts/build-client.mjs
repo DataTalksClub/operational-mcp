@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { resolve, join } from 'node:path';
 import { build } from 'esbuild';
-const clientCommit = '49c8f1e3709d76b8be61730fc47efd627abdb729';
+const clientCommit = '1384f1b8a0d30a5e227f0c1b2bf87594696f6b56';
 const coreCommit = 'e87040d19773a710c6813307c98391209b3ddbe1';
 const temp = process.argv[2] ? null : mkdtempSync(join(tmpdir(), 'mcp-build-'));
 const client = process.argv[2] ? resolve(process.argv[2]) : join(temp, 'pocketshell-client');

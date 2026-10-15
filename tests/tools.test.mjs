@@ -31,7 +31,7 @@ test('DataOps read/write use the same portal API seam as the CLI',async()=>{
 });
 test('PocketShell OAuth adapter uses shared core device/auth implementations',async()=>{
  const calls=[];
- const core={validateBrokerUrl:x=>x,resolveEndpoint:x=>x,USER_CODE_RE:/^[A-Z]{4}-[A-Z]{4}$/,
+ const core={validateBrokerUrl:x=>x,resolveEndpoint:x=>x,pendingDeviceLogin:raw=>({userCode:raw.userCode,verificationUriComplete:'https://approval.example.com/device?code=BCDF-GHJK'}),
  startDevice:async(...a)=>{calls.push(['start',...a]);return {deviceCode:'synthetic-code',userCode:'BCDF-GHJK',expiresIn:600,interval:5};},
  pollDevice:async(...a)=>{calls.push(['poll',...a]);return {status:200,data:{}};},
  parseDeviceToken:()=>({accessToken:'synthetic-token',tokenId:'test',expiresAt:Date.now()/1000+600}),

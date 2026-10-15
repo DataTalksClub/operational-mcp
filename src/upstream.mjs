@@ -46,10 +46,8 @@ export function pocketUpstream({ core, base, webOrigin, gatewayOrigin, fetcher }
     kind: 'pocketshell', base,
     async start(label) {
       const raw = await core.startDevice(base, label, http);
-      if (!core.USER_CODE_RE.test(raw.userCode)) throw new UpstreamError(502, 'invalid_device_response');
-      const approval = new URL('/device', webOrigin);
-      approval.searchParams.set('code', raw.userCode);
-      return { deviceCode: raw.deviceCode, userCode: raw.userCode, approval: approval.href,
+      const pending = core.pendingDeviceLogin(raw, webOrigin);
+      return { deviceCode: raw.deviceCode, userCode: pending.userCode, approval: pending.verificationUriComplete || pending.verificationUri,
         expiry: Date.now() + raw.expiresIn * 1000, interval: raw.interval };
     },
     async poll(deviceCode) {
