@@ -6,3 +6,4 @@ state/
 coverage/
 vendor/psc.mjs
 .build/
+vendor/client-core.mjs
