@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { Store } from './store.mjs';
 import { pocketUpstream, dataopsUpstream } from './upstream.mjs';
@@ -8,7 +9,8 @@ process.umask(0o077);
 const kind = process.env.MCP_SERVICE || 'pocketshell';
 if (!['pocketshell','dataops'].includes(kind)) throw new Error('Unknown MCP_SERVICE');
 const state = process.env.MCP_STATE_DIR || '/var/lib/pocketshell-mcp';
-const store = new Store(join(state, 'oauth.sqlite'), process.env.MCP_STORAGE_KEY);
+const storageKey = process.env.MCP_STORAGE_KEY_FILE ? readFileSync(process.env.MCP_STORAGE_KEY_FILE, 'utf8').trim() : process.env.MCP_STORAGE_KEY;
+const store = new Store(join(state, 'oauth.sqlite'), storageKey);
 const remoteConfig = { base: process.env.MCP_UPSTREAM_ORIGIN, webOrigin: process.env.MCP_WEB_ORIGIN, gatewayOrigin: process.env.MCP_GATEWAY_ORIGIN };
 const remote = kind === 'pocketshell'
   ? pocketUpstream({ ...remoteConfig, core: await import('../vendor/client-core.mjs') })
