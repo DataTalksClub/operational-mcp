@@ -45,3 +45,10 @@ test('HTTP upstream never follows redirects and enforces a response size cap',as
  await assert.rejects(()=>requestJson('https://portal.example.com','https://external.example.com/api'),/Cross-origin/);
  await assert.rejects(()=>requestJson('https://portal.example.com','/api',{fetcher:async()=>new Response('x'.repeat(1024*1024+1))}),/upstream_response_too_large/);
 });
+
+test('DataOps text documents are readable while authentication remains strict JSON',async()=>{
+ const fetcher=async()=>new Response('Synthetic document body',{headers:{'Content-Type':'text/markdown'}});
+ const result=await requestJson('https://portal.example.com','/docs/example',{fetcher,allowText:true});
+ assert.equal(result.text,'Synthetic document body');assert.equal(result.contentType,'text/markdown');
+ await assert.rejects(()=>requestJson('https://portal.example.com','/api/me',{fetcher}),/invalid_upstream_response/);
+});

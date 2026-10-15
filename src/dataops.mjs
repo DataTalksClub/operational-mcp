@@ -16,9 +16,9 @@ export function dataopsTools({ upstream }) {
       { name: 'dataops_guide', description: 'Explain DataOps API access and the main resource families before using read/write tools.', schema: z.object({}), read: true },
     ],
     async call(name, args, credential) {
-      if (name === 'dataops_guide') return { portal: upstream.base, semantics: 'A Template defines reusable work; a Card is an instance; a Task is a checklist item. Use read before write and preserve version/conflict fields returned by the API. Portal authorization applies to every call.', families: ['/api/tasks', '/api/templates', '/api/projects', '/api/calendar', '/api/invoices', '/api/sponsors', '/api/users', '/docs', '/search', '/knowledge'], usage: 'Equivalent to dataops api GET|POST|PUT|PATCH|DELETE <route> --data <JSON>. Consult the portal API or resource response for the precise schema. Auth and token-management endpoints are excluded. Binary uploads/downloads require the portal.' };
+      if (name === 'dataops_guide') return { portal: upstream.base, semantics: 'A Template defines reusable work; a Card is an instance; a Task is a checklist item. Use read before write and preserve version/conflict fields returned by the API. Portal authorization applies to every call.', families: ['/api/tasks', '/api/templates', '/api/projects', '/api/calendar-items', '/api/invoices', '/api/sponsor-crm/queue', '/api/users', '/docs', '/search', '/knowledge'], usage: 'Equivalent to dataops api GET|POST|PUT|PATCH|DELETE <route> --data <JSON>. Consult the portal API or resource response for the precise schema. Auth and token-management endpoints are excluded. Binary uploads/downloads require the portal.' };
       validateRoute(args.route);
-      return upstream.call(args.route, { method: name === 'dataops_read' ? 'GET' : args.method, ...(name === 'dataops_read' ? {} : { body: args.body }), token: credential.token });
+      return upstream.call(args.route, { method: name === 'dataops_read' ? 'GET' : args.method, ...(name === 'dataops_read' ? {} : { body: args.body }), token: credential.token, allowText: true });
     },
   };
 }

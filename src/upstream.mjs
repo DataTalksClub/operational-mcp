@@ -2,7 +2,7 @@ import { digest } from './store.mjs';
 export class UpstreamError extends Error {
   constructor(status, code = 'upstream_failed') { super(code); this.status = status; this.code = code; }
 }
-export async function requestJson(base, path, { method = 'GET', body, token, fetcher = fetch } = {}) {
+export async function requestJson(base, path, { method = 'GET', body, token, fetcher = fetch, allowText = false } = {}) {
   const target = new URL(path, base);
   if (target.origin !== new URL(base).origin || target.username || target.password) throw new Error('Cross-origin upstream URL refused');
   const response = await fetcher(target, { method, redirect: 'manual', signal: AbortSignal.timeout(15000),
@@ -18,7 +18,10 @@ export async function requestJson(base, path, { method = 'GET', body, token, fet
   }
   let data;
   try { data = size ? JSON.parse(Buffer.concat(parts).toString()) : {}; }
-  catch { throw new UpstreamError(502, 'invalid_upstream_response'); }
+  catch {
+    if (allowText && response.ok) data = { text: Buffer.concat(parts).toString('utf8'), contentType: response.headers.get('content-type') || 'text/plain' };
+    else throw new UpstreamError(502, 'invalid_upstream_response');
+  }
   if (!response.ok) throw new UpstreamError(response.status, /^[a-z_]{1,64}$/.test(data?.error) ? data.error : 'upstream_failed');
   return data;
 }
