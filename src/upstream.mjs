@@ -46,7 +46,7 @@ export function pocketUpstream({ core, base, webOrigin, gatewayOrigin, fetcher }
     catch (error) { if (error.code === 'NOT_LOGGED_IN') throw new UpstreamError(401, 'invalid_identity'); throw error; }
   }
   return {
-    kind: 'pocketshell', base,
+    kind: 'pocketshell', base, gatewayOrigin,
     async start(label) {
       const raw = await core.startDevice(base, label, http);
       const pending = core.pendingDeviceLogin(raw, webOrigin);

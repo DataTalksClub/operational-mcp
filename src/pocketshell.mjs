@@ -62,11 +62,13 @@ export function pocketTools({ store, upstream, runtimeRoot = '/run/pocketshell-m
       if (!profile.hosts.some(x => x.name === args.host)) throw new Error('Host is not configured for this account');
       // Confirm every operation still belongs to a device in the caller's account.
       // The gateway enforces current account membership for the psc tunnel too.
-      return execute(pocketArgv(name, args), { profile, credential, broker: upstream.base, runtimeRoot, stdin: name === 'send' ? args.text : '' });
+      return execute(pocketArgv(name, args), { profile, credential, broker: upstream.base, gateway: upstream.gatewayOrigin, runtimeRoot, stdin: name === 'send' ? args.text : '' });
     },
   };
 }
-export async function executePsc(args, { profile, credential, broker, runtimeRoot, stdin, entrypoint = psc, timeoutMs = 45000 }) {
+export async function executePsc(args, { profile, credential, broker, gateway, runtimeRoot, stdin, entrypoint = psc, timeoutMs = 45000 }) {
+  const gatewayUrl = new URL(gateway);
+  if (gatewayUrl.protocol !== 'https:' || gatewayUrl.origin !== gateway) throw new Error('A configured HTTPS gateway origin is required');
   await mkdir(runtimeRoot, { recursive: true, mode: 0o700 });
   const dir = await mkdtemp(join(resolve(runtimeRoot), 'call-'));
   try {
@@ -75,7 +77,7 @@ export async function executePsc(args, { profile, credential, broker, runtimeRoo
     await writeFile(key, profile.privateKey, { mode: 0o600 });
     await writeFile(join(dir, 'pocketshell/gateway_known_hosts'), profile.pins, { mode: 0o600 });
     await writeFile(join(dir, 'pocketshell/credentials.json'), JSON.stringify({ version: 1, broker_url: broker, access_token: credential.token, token_id: credential.tokenId, expires_at: credential.expiry / 1000, email: credential.identity.email, label: 'PocketShell MCP' }), { mode: 0o600 });
-    await writeFile(join(dir, 'pocketshell-tui-client/hosts.json'), JSON.stringify({ version: 1, hosts: profile.hosts.map(x => ({ name: x.name, mode: 'gateway', gateway: { deviceId: x.deviceId, user: x.user, identityFile: key } })) }), { mode: 0o600 });
+    await writeFile(join(dir, 'pocketshell-tui-client/hosts.json'), JSON.stringify({ version: 1, hosts: profile.hosts.map(x => ({ name: x.name, mode: 'gateway', gateway: { deviceId: x.deviceId, user: x.user, identityFile: key, server: gateway.replace(/^https:/, 'wss:') } })) }), { mode: 0o600 });
     return await new Promise((resolveResult, reject) => {
       const child = spawn(process.execPath, [entrypoint, ...args], {
         env: { PATH: '/usr/local/bin:/usr/bin:/bin', LANG: 'C.UTF-8', XDG_CONFIG_HOME: dir, XDG_RUNTIME_DIR: join(dir, 'runtime'), POCKETSHELL_BROKER_URL: broker },

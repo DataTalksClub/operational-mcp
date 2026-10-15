@@ -10,9 +10,9 @@ test('PocketShell rejects local/option injection and passes text only as stdin',
  assert.throws(()=>send.schema.parse({host:'-H',session:'s',text:'x'}));
  assert.throws(()=>send.schema.parse({host:'host',session:'--help',text:'x'}));
  const profile={hosts:[{name:'test-host',deviceId:'test-device',user:'test-user'}],pins:'synthetic verified pin',privateKey:'synthetic PRIVATE KEY'};
- const calls=[];const tools=pocketTools({store:{get:()=>profile},upstream:{base:'https://broker.example.com'},execute:async(...a)=>{calls.push(a);return {ok:true};}});
+ const calls=[];const tools=pocketTools({store:{get:()=>profile},upstream:{base:'https://broker.example.com',gatewayOrigin:'https://gateway.example.com'},execute:async(...a)=>{calls.push(a);return {ok:true};}});
  await tools.call('send',send.schema.parse({host:'test-host',session:'session',text:'--help; $(example)\nmore'}),{identity:{id:'test'}});
- assert.deepEqual(calls[0][0],['test-host','send','session','-','--json']);assert.equal(calls[0][1].stdin,'--help; $(example)\nmore');
+ assert.deepEqual(calls[0][0],['test-host','send','session','-','--json']);assert.equal(calls[0][1].gateway,'https://gateway.example.com');assert.equal(calls[0][1].stdin,'--help; $(example)\nmore');
  await assert.rejects(()=>tools.call('ls',{host:'other-host'},{identity:{id:'test'}}),/not configured/);
  assert.throws(()=>validateProfile({...profile,hosts:[{name:'local'}]}));
 });
@@ -38,6 +38,7 @@ test('PocketShell OAuth adapter uses shared core device/auth implementations',as
  getSession:async(...a)=>{calls.push(['session',...a]);return {tokenId:'test',email:'operator@example.com',expiresAt:Date.now()/1000+600};},
  logout:async()=>{},mintGatewayToken:async()=>({token:'synthetic-gateway-token'}),fetchDevices:async()=>[]};
  const remote=pocketUpstream({core,base:'https://broker.example.com',webOrigin:'https://approval.example.com',gatewayOrigin:'https://gateway.example.com'});
+ assert.equal(remote.gatewayOrigin,'https://gateway.example.com');
  const pending=await remote.start('test');assert.equal(pending.approval,'https://approval.example.com/device?code=BCDF-GHJK');
  const credential=await remote.poll(pending.deviceCode);assert.equal(credential.token,'synthetic-token');assert.deepEqual(calls.map(x=>x[0]),['start','poll','session']);
 });
