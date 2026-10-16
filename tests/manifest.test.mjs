@@ -11,11 +11,16 @@ test('manifest parses only reviewed paths/options and emits safe argv without sh
 });
 test('progressive help includes scope and schemas only at the requested command',()=>{
  const m=sample();assert.deepEqual(parseCommand(m,[]),{help:[]});
- assert.equal(commandHelp(m).commands[0].inputSchema,undefined);
+ const top=commandHelp(m);assert.deepEqual(top.commands,[]);assert.deepEqual(top.groups,[{group:'items',commands:1,writes:1}]);
+ assert.equal(commandHelp(m,['items']).commands[0].inputSchema,undefined);assert.equal(commandHelp(m,['items']).commands[0].command,'items create');
  const item=commandHelp(m,['items','create']).commands[0];assert.equal(item.requiresApproval,true);assert.equal(item.scope,'example:items.create');assert.ok(item.inputSchema);
  assert.equal(commandHelp(m,[],()=>false).commands.length,0);
 });
 test('rejects incomplete mappings, open schemas, duplicate paths and contradictory classifications',()=>{
  const m=sample();const raw=JSON.parse(JSON.stringify(m, (key,value)=>['validate','scope'].includes(key)?undefined:value));
  for(const mutate of [x=>x.commands[0].positional=[],x=>x.commands[0].inputSchema.additionalProperties=true,x=>x.commands.push(x.commands[0]),x=>{x.commands[0].read=true;x.commands[0].destructive=true;}]) {const value=structuredClone(raw);mutate(value);assert.throws(()=>compileManifest(value));}
+});
+test('help and connect are gateway verbs that no manifest command may shadow',()=>{
+ assert.deepEqual(parseCommand(sample(),['connect']),{connect:true});assert.throws(()=>parseCommand(sample(),['connect','x']));
+ for(const verb of ['help','connect'])assert.throws(()=>compileManifest({version:1,namespace:'example',description:'Example',commands:[{path:[verb],description:'x',read:true,inputSchema:{type:'object',additionalProperties:false,properties:{}}}]}),/Reserved/);
 });

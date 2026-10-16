@@ -4,11 +4,16 @@ All examples are placeholders. Supply deployment addresses and account informati
 
 | Variable | Meaning |
 | --- | --- |
-| `MCP_SERVICE` | `pocketshell` or `dataops` |
+| `MCP_SERVICE` | Optional; only `gateway` (or legacy `pocketshell`). Other CLIs are registered, not run as separate services |
 | `MCP_ISSUER` | Public HTTPS origin, optionally followed by a single service path; no trailing slash |
-| `MCP_UPSTREAM_ORIGIN` | PocketShell broker origin or DataOps portal origin |
+| `MCP_UPSTREAM_ORIGIN` | PocketShell broker origin (the primary login) |
 | `MCP_WEB_ORIGIN` | Trusted device-approval web origin |
-| `MCP_GATEWAY_ORIGIN` | PocketShell gateway HTTPS origin; PocketShell only |
+| `MCP_GATEWAY_ORIGIN` | PocketShell gateway HTTPS origin |
+| `MCP_RUNTIME_DIR` | Private directory for per-call worker homes; default `/run/pocketshell-mcp` |
+| `MCP_DATAOPS_ORIGIN` | Enables the `dataops` tool against this portal origin (device flow) |
+| `MCP_DATAOPS_WEB_ORIGIN` | Optional DataOps device-approval origin; defaults to `MCP_DATAOPS_ORIGIN` |
+| `MCP_DATAOPS_ENTRYPOINT` | Optional absolute path of the built DataOps CLI; defaults to `vendor/dataops.mjs` |
+| `MCP_CLI_CONFIG_FILE` | Optional operator-only JSON file registering more CLIs; see below |
 | `MCP_ALLOWED_EMAILS` | Required comma-separated allowlist of upstream-verified account emails |
 | `MCP_REDIRECT_URIS` | Optional exact callback allowlist; unset accepts standard HTTPS and HTTP-loopback DCR callbacks |
 | `MCP_STORAGE_KEY_FILE` | Preferred: path to a protected file containing a 32-byte hexadecimal encryption key |
@@ -20,9 +25,53 @@ All examples are placeholders. Supply deployment addresses and account informati
 | `MCP_VAULT_DEDICATED_ORIGIN` | Required with `MCP_VAULT=on`: the issuer's origin, repeated to confirm that nothing else (no DataOps, no other app) is served on it |
 | `MCP_VAULT_IDLE_SECONDS` | Drop a grant's unlocked keys after this long without a tool call; default 1800 (30 minutes), 60 to the TTL |
 
-For example, use `https://mcp.example.com` for PocketShell and `https://mcp.example.com/dataops` for DataOps. Their MCP resources are `/mcp` and `/dataops/mcp`. The server advertises the correct discovery addresses for either path.
+For example, with `https://mcp.example.com` the MCP resource is `https://mcp.example.com/mcp`. The server advertises the correct discovery addresses for an optional single service path.
 
 No service address, account email, SSH identity or host pin is built into the public project. Preserve the storage key when updating configuration. Back up the encrypted store and its key through the managed secret and backup systems; losing the key loses access to stored grants and SSH profiles.
+
+## Registered CLIs (`MCP_CLI_CONFIG_FILE`)
+
+A JSON array, at most 16 entries. Each entry registers one CLI tool:
+
+```json
+[{
+  "manifestFile": "/etc/pocketshell-mcp/manifests/example.json",
+  "command": "/opt/example/bin/example",
+  "prefix": [],
+  "mounts": ["/opt/example"],
+  "origin": "https://cli.example.com",
+  "originEnv": "EXAMPLE_URL",
+  "auth": { "type": "token", "tokenEnv": "EXAMPLE_TOKEN" }
+}]
+```
+
+`command` is an absolute executable, never a shell. `mounts` are read-only paths the sandbox needs. The CLI always receives the fixed `origin`, and no call can choose another one. The manifest is the reviewed command allowlist. See `manifests/` for examples.
+
+### Auth types
+
+| `auth.type` | Linking | Injected into the worker |
+| --- | --- | --- |
+| `token` | The user pastes a token or API key once on the gateway's HTTPS page | `tokenEnv`, and/or `env` and `files` templates |
+| `dapier-device` | The gateway runs Dapier's device login as its own device | `dapier/session.json` |
+
+DataOps (`MCP_DATAOPS_ORIGIN`) and PocketShell (the primary login) use built-in device flows.
+
+Token options:
+
+- `tokenEnv`: an environment variable set to the token.
+- `env`: `{ "NAME": "Token {token}" }` templates.
+- `files`: `{ "example/config.json": { "token": "{token}", "url": "{origin}" } }`. Each path is relative to the worker's private `HOME`, which is also `XDG_CONFIG_HOME`. A string value is written as is; any other JSON value is serialized.
+- `validate`: `{ "path": "/api/me", "scheme": "Token" }` checks the token against the fixed origin before storing it.
+- `lifetimeDays`: how long the stored copy is kept; default 30.
+
+At least one of `tokenEnv`, `env` or `files` must use `{token}`. Disconnecting removes the gateway's encrypted copy. Revoke the token upstream separately.
+
+To add an auth type, call `registerAuthType(name, { config, create })` from `src/auth.mjs`. `config` is a strict zod schema for the `auth` block. `create` returns:
+
+- `auth`, the linking plugin: either a device plugin with `start`, `poll`, `revoke` and optional `identity`, or a token plugin with `accept` and `revoke`.
+- `materialize(credential)`, which returns the `{ environment, files }` the CLI expects.
+
+The config loader and browser pages need no change.
 
 ## PocketShell SSH profile
 

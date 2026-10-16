@@ -1,15 +1,18 @@
 # Add a connector
 
-Use the deployed public HTTPS URL supplied by the operator. The examples below use `https://mcp.example.com/mcp`; use `https://mcp.example.com/dataops/mcp` for DataOps. The URL must be reachable from the assistant provider's servers, with a trusted certificate.
+Use the deployed public HTTPS URL supplied by the operator. The examples below use `https://mcp.example.com/mcp`. One connection covers every registered CLI. The URL must be reachable from the assistant provider's servers, with a trusted certificate.
 
 Every client follows the same sign-in sequence:
 
 1. Discover OAuth metadata and register automatically with DCR.
 2. Open the authorization page and inspect the client callback address and requested access.
-3. Choose **Continue to device approval**, open the approval link, and approve the displayed code in the existing PocketShell or DataOps account.
-4. Return to the connector authorization tab and choose **Finish connection**. The browser returns to the assistant; the client completes its PKCE exchange.
+3. Choose **Continue to device approval**, open the approval link, and approve the displayed code in the existing PocketShell account.
+4. Return to the connector authorization tab and choose **Finish connection**.
+5. Optionally connect other CLI accounts on the same page. For a device-flow CLI, choose **Connect <cli> as a gateway device** and approve the new device, which is named after the assistant (for example "MCP gateway, ChatGPT"). For a token CLI, paste its token into the password field there. Choose **Continue** to skip any of them. The browser returns to the assistant, and the client completes its PKCE exchange.
 
-No bearer token, SSH key or pin needs to be pasted into the assistant.
+To connect a CLI later, ask the assistant to call that CLI's tool with `connect`; a tool call for an unconnected CLI also returns this link. Open the link in a browser and approve a one-time device in your primary account. That device is revoked immediately and only proves you own this connection. Then connect the CLI as in step 5. The link works once and expires after 10 minutes.
+
+No bearer token, API key, SSH key or pin is pasted into the assistant.
 
 ## ChatGPT and dots
 
