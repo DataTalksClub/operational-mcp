@@ -2,11 +2,11 @@ import { digest } from './store.mjs';
 export class UpstreamError extends Error {
   constructor(status, code = 'upstream_failed') { super(code); this.status = status; this.code = code; }
 }
-export async function requestJson(base, path, { method = 'GET', body, token, fetcher = fetch, allowText = false } = {}) {
+export async function requestJson(base, path, { method = 'GET', body, token, scheme = 'Bearer', fetcher = fetch, allowText = false } = {}) {
   const target = new URL(path, base);
   if (target.origin !== new URL(base).origin || target.username || target.password) throw new Error('Cross-origin upstream URL refused');
   const response = await fetcher(target, { method, redirect: 'manual', signal: AbortSignal.timeout(15000),
-    headers: { Accept: 'application/json', ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}), ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    headers: { Accept: 'application/json', ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}), ...(token ? { Authorization: `${scheme} ${token}` } : {}) },
     ...(body !== undefined ? { body: JSON.stringify(body) } : {}) });
   const reader = response.body?.getReader();
   let size = 0; const parts = [];

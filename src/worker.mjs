@@ -21,7 +21,7 @@ export async function runWorker({ command, prefix = [], argv, runtimeRoot, mount
   const directory = await mkdtemp(join(resolve(runtimeRoot), 'worker-'));
   try {
     for (const [name, body] of Object.entries(files)) {
-      if (!/^[a-zA-Z0-9_-]+(?:\/[a-zA-Z0-9_.-]+)?$/.test(name) && !/^[a-zA-Z0-9_-]+\.json$/.test(name)) throw new Error('Unsafe credential filename');
+      if (!/^\.?[a-zA-Z0-9_-][a-zA-Z0-9_.-]*(?:\/[a-zA-Z0-9_-][a-zA-Z0-9_.-]*)?$/.test(name)) throw new Error('Unsafe credential filename');
       if (name.includes('/')) await mkdir(join(directory, name.split('/')[0]), {mode:0o700});
       await writeFile(join(directory, name), body, { mode: 0o600, flag: 'wx' });
     }

@@ -31,10 +31,4 @@ export function dataopsRegistration({entrypoint, upstream, runtimeRoot, run, com
   return cliRegistration({ manifest:JSON.parse(readFileSync(new URL('../manifests/dataops.json',import.meta.url))), command, prefix:[entrypoint], mounts:[dirname(dirname(entrypoint))], auth:upstream, runtimeRoot, run,
     credentials: credential => ({ suffix:['--json'], environment:{DATAOPS_URL:upstream.base,DATAOPS_CONFIG_DIR:'{worker}'},files:{'credentials.json':JSON.stringify({defaultUrl:upstream.base,profiles:{[upstream.base]:{token:credential.token,tokenId:credential.tokenId,expiresAt:new Date(credential.expiry).toISOString(),user:{email:credential.identity.email}}}})} }) });
 }
-export function staticTokenAuth({ validate = async () => {}, lifetimeMs = 30 * 86400000 } = {}) {
-  return { type:'token', async accept(token, primary) {
-    if (typeof token !== 'string' || token.length < 12 || token.length > 8192 || /\s|[\x00-\x1f\x7f]/.test(token)) throw new Error('Invalid token');
-    await validate(token);
-    return {token,expiry:Date.now()+lifetimeMs,identity:primary.identity};
-  }, async revoke() {} };
-}
+export { staticTokenAuth } from './auth.mjs';
