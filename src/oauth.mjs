@@ -107,15 +107,19 @@ export function installOAuth(app, { store, issuer, upstream, allowedEmails, redi
       }
       return finish(req, res, tx, credential);
     } catch (error) {
-      if (error instanceof UpstreamError && ['authorization_pending', 'slow_down'].includes(error.code)) {
-        if (error.code === 'slow_down') tx.device.interval = Math.min(60, tx.device.interval + 5);
-        tx.phase = 'pending'; tx.nextPoll = Date.now() + tx.device.interval * 1000; saveTx(tx);
-        return page(res, `<p>Approval is still pending. Wait ${tx.device.interval} seconds, approve in the other tab, then continue.</p><form method="post" action="${prefix}/oauth/complete"><input type="hidden" name="csrf" value="${tx.csrf}"><button>Check approval</button></form>`, tx);
-      }
+      if (stillPending(res, tx, error, 'pending', '/oauth/complete')) return;
       store.delete('transaction', tx.id); return fail(res, 'access_denied', 403);
     }
   });
+  function stillPending(res, tx, error, phase, action) {
+    if (!(error instanceof UpstreamError && ['authorization_pending', 'slow_down'].includes(error.code))) return false;
+    if (error.code === 'slow_down') tx.device.interval = Math.min(60, tx.device.interval + 5);
+    tx.phase = phase; tx.nextPoll = Date.now() + tx.device.interval * 1000; saveTx(tx);
+    page(res, `<p>Approval is still pending. Wait ${tx.device.interval} seconds, approve in the other tab, then continue.</p><form method="post" action="${prefix}${action}"><input type="hidden" name="csrf" value="${tx.csrf}"><button>Check approval</button></form>`, tx);
+    return true;
+  }
   function finish(req, res, tx, credential) {
+    if (tx.connect) return connected(res, tx);
     if (vault) {
       // Unlock before issuing the short-lived code. Linked credentials stay encrypted in tx.
       tx.phase = 'unlock'; tx.credential = credential; tx.expiry = Date.now() + 600000; saveTx(tx); txCookie(res, txNonce(req));
@@ -124,6 +128,63 @@ export function installOAuth(app, { store, issuer, upstream, allowedEmails, redi
     res.clearCookie(cookieName, { path: `${prefix}/oauth` }); res.redirect(303, issue(tx, credential));
   }
   const links = installLinks(app, { connections, csrf, saveTx, page, prefix, fail, finish, issuer });
+  // "connect <cli>" after consent. A CLI tool hands the assistant a single-use link bound to its
+  // grant. Whoever opens it first proves they own that grant with a one-time device approval in the
+  // primary account (revoked as soon as the identity matches), so a leaked link cannot attach a
+  // different account to this connection. Then the usual link step runs for that one CLI.
+  const ticketKey = value => typeof value === 'string' && /^[A-Za-z0-9_-]{43}$/.test(value) ? digest(value) : '';
+  function connectLink(grantId, cli) {
+    if (!connections.some(c => c.name === cli)) return null;
+    const ticket = secret();
+    store.put('connect', digest(ticket), { grantId, cli }, Date.now() + 600000);
+    return `${issuer}/oauth/connect?${new URLSearchParams({ ticket })}`;
+  }
+  app.get('/oauth/connect', (req, res) => {
+    // GET never consumes the ticket, because chat clients may prefetch links.
+    const ticket = store.get('connect', ticketKey(req.query.ticket));
+    if (!ticket) return page(res, '<p>This connect link expired or was already used. Ask your assistant for a new one.</p>');
+    page(res, `<p>Connect <strong>${html(ticket.cli)}</strong> to an existing assistant connection. First confirm it is you with a one-time device approval in your primary account. Credentials are entered only on these pages, never in chat.</p><form method="post" action="${prefix}/oauth/connect"><input type="hidden" name="ticket" value="${html(req.query.ticket)}"><button>Continue</button></form>`);
+  });
+  app.post('/oauth/connect', async (req, res) => {
+    if (req.get('origin') !== origin) return fail(res);
+    const key = ticketKey(req.body?.ticket);
+    const ticket = store.transaction(() => { const value = store.get('connect', key); if (value) store.delete('connect', key); return value; });
+    const grant = ticket && store.get('grant', ticket.grantId);
+    if (!grant || grant.revoked) return fail(res);
+    const nonce = secret(); const clientName = store.get('client', grant.clientId)?.client_name || 'MCP client';
+    const tx = { id: digest(nonce), csrf: secret(), clientId: grant.clientId, clientName, redirect: issuer, connect: ticket, only: [ticket.cli], identity: grant.credential.identity, expiry: Date.now() + 600000, phase: 'confirming' };
+    saveTx(tx); txCookie(res, nonce);
+    try {
+      tx.device = await upstream.start(`MCP gateway, ${clientName} (confirm ${ticket.cli})`);
+      tx.expiry = Math.min(tx.expiry, tx.device.expiry); tx.nextPoll = 0; tx.phase = 'confirm'; saveTx(tx);
+      page(res, `<p>Confirm it is you: approve code <strong>${html(tx.device.userCode)}</strong>.</p><p><a href="${html(tx.device.approval)}" target="_blank" rel="noopener noreferrer">Open device approval</a></p><p>This approval is only a check and ends immediately afterwards.</p><form method="post" action="${prefix}/oauth/connect/complete"><input type="hidden" name="csrf" value="${tx.csrf}"><button>Continue</button></form>`, tx);
+    } catch { store.delete('transaction', tx.id); fail(res, 'temporarily_unavailable', 503); }
+  });
+  app.post('/oauth/connect/complete', async (req, res) => {
+    const tx = csrf(req);
+    if (!tx || tx.phase !== 'confirm') return fail(res);
+    if (Date.now() < tx.nextPoll) return fail(res, 'slow_down', 429);
+    tx.nextPoll = Date.now() + tx.device.interval * 1000; tx.phase = 'confirm_busy'; saveTx(tx);
+    let credential;
+    try { credential = await upstream.poll(tx.device.deviceCode); }
+    catch (error) { if (stillPending(res, tx, error, 'confirm', '/oauth/connect/complete')) return; store.delete('transaction', tx.id); return fail(res, 'access_denied', 403); }
+    await upstream.revoke(credential).catch(() => store.put('revoke', secret(), { credential, attempts: 0 }, Date.now()));
+    if (credential.identity.id !== tx.identity.id) { store.delete('transaction', tx.id); return fail(res, 'access_denied', 403); }
+    delete tx.device; tx.phase = 'link'; tx.expiry = Date.now() + 600000; saveTx(tx); txCookie(res, txNonce(req));
+    return links.show(res, tx);
+  });
+  async function connected(res, tx) {
+    const { grantId, cli } = tx.connect; const credential = tx.linked?.[cli];
+    store.delete('transaction', tx.id); res.clearCookie(cookieName, { path: `${prefix}/oauth` });
+    const grant = store.get('grant', grantId);
+    if (!grant || grant.revoked) { if (credential) await revokeCredentials(null, tx.linked).catch(() => {}); return fail(res, 'access_denied', 403); }
+    if (!credential) return page(res, '<p>Nothing was connected. You can close this page.</p>');
+    // No await between reading and writing the grant, so a concurrent revoke sees either state whole.
+    const previous = grant.linked?.[cli];
+    store.update('grant', grantId, { ...grant, linked: { ...grant.linked, [cli]: credential } });
+    if (previous) await revokeCredentials(null, { [cli]: previous }).catch(() => store.put('revoke', secret(), { linked: { [cli]: previous }, attempts: 0 }, Date.now()));
+    page(res, `<p>${html(cli)} is connected for ${html(tx.clientName)}. Return to your assistant; its next call uses this account.</p>`);
+  }
   async function revokeCredentials(credential, linked = {}) {
     const jobs = [];
     if (credential?.expiry > Date.now()) jobs.push(upstream.revoke(credential));
@@ -239,7 +300,7 @@ export function installOAuth(app, { store, issuer, upstream, allowedEmails, redi
     res.json({});
   });
   return {
-    resource,
+    resource, connectLink,
     // Kinds that only sweep() may delete; prune() must skip them.
     sweptKinds: ['transaction', 'revoke', 'grant'],
     // An unlock transaction that expired unused still holds a live upstream device session; revoke it.
@@ -249,7 +310,7 @@ export function installOAuth(app, { store, issuer, upstream, allowedEmails, redi
       const pending = [...store.takeExpired('grant').map(({id,value})=>({id,credential:value.credential,linked:value.linked,attempts:0})), ...store.takeExpired('transaction').map(({ id, value }) => ({ id, credential: value.credential, linked:value.linked, attempts: 0 })),
         ...store.takeExpired('revoke').map(({ id, value }) => ({ id, ...value }))];
       for (const job of pending) {
-        if (!job.credential) continue;
+        if (!job.credential && !job.linked) continue;
         try { await revokeCredentials(job.credential, job.linked); }
         catch { store.put('revoke', job.id, { credential: job.credential, linked:job.linked, attempts: job.attempts + 1 }, Date.now()); }
       }

@@ -5,8 +5,11 @@ export function installLinks(app, { connections, csrf, saveTx, page, prefix, fai
   const plugins = new Map(connections.map(c => [c.name, c.auth]));
   if (plugins.size !== connections.length || connections.some(c=>!/^[a-z][a-z0-9_-]{0,47}$/.test(c.name))) throw new Error('Invalid auth plugin registration');
   const hidden = (tx, name) => `<input type="hidden" name="csrf" value="${tx.csrf}"><input type="hidden" name="cli" value="${html(name)}">`;
+  // A consent transaction carries the new primary credential; a later connect step carries only
+  // the confirmed identity of the grant owner and the one CLI it is for.
+  const primary = tx => tx.credential?.identity || tx.identity;
   function show(res, tx, notice = '') {
-    const forms = connections.map(({name,auth}) => {
+    const forms = connections.filter(c => !tx.only || tx.only.includes(c.name)).map(({name,auth}) => {
       const state = tx.linkDevices?.[name];
       if (tx.linked?.[name]) return `<p>${html(name)}: connected</p>`;
       if (state) return `<p>${html(name)}: approve <strong>${html(state.userCode)}</strong> on <a href="${html(state.approval)}" target="_blank" rel="noopener noreferrer">its device approval page</a>.</p><form method="post" action="${prefix}/oauth/link/complete">${hidden(tx,name)}<button>Finish ${html(name)} approval</button></form>`;
@@ -17,10 +20,10 @@ export function installLinks(app, { connections, csrf, saveTx, page, prefix, fai
   }
   function get(req) {
     const tx = csrf(req); const name = req.body?.cli; const auth = plugins.get(name);
-    if (!tx || tx.phase !== 'link' || !auth || tx.linked?.[name]) return null;
+    if (!tx || tx.phase !== 'link' || !auth || tx.linked?.[name] || (tx.only && !tx.only.includes(name))) return null;
     return {tx,name,auth};
   }
-  const sameAccount = (credential, tx) => credential.identity?.email === tx.credential.identity.email;
+  const sameAccount = (credential, tx) => credential.identity?.email === primary(tx).email;
   app.post('/oauth/link/start', async (req,res) => {
     const step = get(req); if (!step || step.auth.type === 'token' || step.tx.linkDevices?.[step.name]) return fail(res);
     const {tx,name,auth} = step;
@@ -50,7 +53,7 @@ export function installLinks(app, { connections, csrf, saveTx, page, prefix, fai
     const step=get(req);if(!step||step.auth.type!=='token'||!issuer.startsWith('https:'))return fail(res);
     const {tx,name,auth}=step;tx.phase='link_busy';saveTx(tx);
     try {
-      const credential=await auth.accept(req.body.token,tx.credential);
+      const credential=await auth.accept(req.body.token,{identity:primary(tx)});
       if(!sameAccount(credential,tx))throw new Error('Account mismatch');
       tx.linked={...tx.linked,[name]:credential};tx.phase='link';saveTx(tx);return show(res,tx);
     }catch{tx.phase='link';saveTx(tx);return show(res,tx,'Token could not be connected. Check its permissions.');}

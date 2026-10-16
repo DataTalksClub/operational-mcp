@@ -42,7 +42,7 @@ export function createApp(config) {
     }, async (args, extra) => {
       if (req.readOnly && !tool.read && !tool.mixed) return { isError: true, content: [{ type: 'text', text: 'read-only connection: reconnect without read-only to make changes' }] };
       try {
-        const result = await tools.call(tool.name, args, req.credential, { grantId: req.grantId, scopes:req.scopes, readOnly:req.readOnly, linked:req.linked, signal:extra.signal });
+        const result = await tools.call(tool.name, args, req.credential, { grantId: req.grantId, scopes:req.scopes, readOnly:req.readOnly, linked:req.linked, connect:name => oauth.connectLink(req.grantId, name), signal:extra.signal });
         const content = JSON.stringify(result);
         if (Buffer.byteLength(content) > 1024 * 1024) throw new Error('Response too large');
         return { content: [{ type: 'text', text: content }], structuredContent: result && typeof result === 'object' && !Array.isArray(result) ? result : { result } };

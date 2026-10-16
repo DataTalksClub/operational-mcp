@@ -19,16 +19,23 @@ export function gatewayTools(registrations, { globalLimit = 8, perUserLimit = 2 
       const permits = c => granted.has(c.scope) && (!context.readOnly || c.read);
       if (name === 'catalog') {
         if (!granted.has('gateway:catalog')) throw new Error('Insufficient scope');
-        return { clis: [...entries.values()].map(({manifest}) => ({ name: manifest.namespace, description: manifest.description, connected: manifest.namespace === 'pocketshell' || !!context.linked?.[manifest.namespace], commands: manifest.commands.filter(permits).length })), usage: 'Call a CLI with empty argv, then help followed by a command path. Connect accounts on the gateway consent page.' };
+        return { clis: [...entries.values()].map(({manifest}) => ({ name: manifest.namespace, description: manifest.description, connected: manifest.namespace === 'pocketshell' || !!context.linked?.[manifest.namespace], commands: manifest.commands.filter(permits).length })), usage: 'Call a CLI with empty argv, then help followed by a group or command path. Call a CLI with argv ["connect"] for a browser link that connects its account.' };
       }
       const entry = entries.get(name); if (!entry) throw new Error('Unknown CLI');
       const args = schema.parse(input); const parsed = parseCommand(entry.manifest, args.argv);
       if (parsed.help) return commandHelp(entry.manifest, parsed.help, permits);
+      // The link is a single-use browser page bound to this grant; it never carries a credential.
+      const connectLink = () => ({ cli: name, connect: context.connect?.(name) || null, message: 'Open this link in your browser to connect the account. It expires in 10 minutes and works once. Never paste credentials into chat.' });
+      if (parsed.connect) {
+        if (name === 'pocketshell') return { cli: name, connected: true, message: 'PocketShell is this connection\'s own login. Reconnect the connector to change it.' };
+        if (!entry.manifest.commands.some(permits)) throw new Error('Insufficient command scope');
+        return { ...connectLink(), connected: !!context.linked?.[name] };
+      }
       const command = parsed.command;
       if (!permits(command)) throw new Error('Insufficient command scope');
       if (!command.read && !args.approved) return { approvalRequired: true, command: command.path.join(' '), scope: command.scope, destructive: command.destructive, message: 'Confirm this action with the user, then repeat with approved: true. A timeout may follow a completed write; do not retry blindly.' };
       const credential = name === 'pocketshell' ? primary : context.linked?.[name];
-      if (!credential || credential.expiry <= Date.now()) return { connectionRequired: true, cli: name, message: 'Re-authorize this gateway and connect this CLI on its secure consent page. Never paste credentials into chat.' };
+      if (!credential || credential.expiry <= Date.now()) return { connectionRequired: true, ...connectLink() };
       // Device tokens must still identify the same linked account. Static adapters may implement
       // a service-specific validation instead. No ambient credentials enter an execution adapter.
       if (entry.auth?.identity) {

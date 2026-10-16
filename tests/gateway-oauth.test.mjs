@@ -51,3 +51,42 @@ test('one OAuth connects gateway devices and static tokens privately, with exact
  const attempt=await call('/mcp',{jsonrpc:'2.0',id:2,method:'tools/call',params:{name:'dataops',arguments:{argv:['create'],approved:true}}},{Authorization:`Bearer ${readToken.access_token}`,Accept:'application/json, text/event-stream'});assert.equal((await attempt.json()).result.isError,true);
  await call('/oauth/revoke',{client_id:client.client_id,token:token.refresh_token});assert.ok(revoked.includes(grant.linked.dataops.token));assert.ok(!revoked.includes(staticToken));
 });
+test('connect <cli> after consent links one CLI to the existing grant only after the owner confirms',async t=>{
+ const dir=await mkdtemp(join(tmpdir(),'mcp-gateway-connect-'));const key=join(dir,'key.pem'),cert=join(dir,'cert.pem');
+ execFileSync('openssl',['req','-x509','-newkey','rsa:2048','-nodes','-keyout',key,'-out',cert,'-days','1','-subj','/CN=localhost','-addext','subjectAltName=DNS:localhost'],{stdio:'ignore'});
+ const store=new Store(':memory:',randomBytes(32).toString('hex'));let app;const server=createServer({key:await readFile(key),cert:await readFile(cert)},(req,res)=>app(req,res));server.listen(0,'localhost');await once(server,'listening');const issuer=`https://localhost:${server.address().port}`;
+ const {Agent,fetch:tlsFetch}=await import('undici');const dispatcher=new Agent({connect:{ca:await readFile(cert)}});
+ t.after(async()=>{server.closeAllConnections();server.close();await dispatcher.close();store.close();await rm(dir,{recursive:true,force:true});});
+ const owner={id:'synthetic-owner',email:'operator@example.com'};let who=owner;const labels=[],revoked=[];
+ const device={start:async label=>{labels.push(label);return{deviceCode:secret(),userCode:'BCDF-GHJK',approval:'https://approval.example.com/device',expiry:Date.now()+600000,interval:1};},poll:async()=>({token:secret(),expiry:Date.now()+86400000,identity:who}),identity:async()=>owner,revoke:async c=>{revoked.push(c.token);}};
+ const tools=gatewayTools([{manifest:{version:1,namespace:'aisl',description:'aisl',commands:[{path:['list'],description:'list',read:true,inputSchema:{type:'object',additionalProperties:false,properties:{}}}]},execute:async(_p,c)=>({token:c.token})}]);
+ app=createApp({store,issuer,upstream:{...device,kind:'gateway'},tools,connections:[{name:'aisl',auth:staticTokenAuth()}],allowedEmails:[owner.email],redirectUris:[]});
+ const call=(path,body,headers={})=>tlsFetch(issuer+path,{dispatcher,redirect:'manual',...(body?{method:'POST',headers:{'content-type':'application/json',...headers},body:JSON.stringify(body)}:{headers})});
+ const client=await(await call('/oauth/register',{client_name:'ChatGPT fixture',redirect_uris:['http://localhost:9999/callback']})).json();const verifier=secret();
+ const authorize=await call('/oauth/authorize?'+new URLSearchParams({client_id:client.client_id,redirect_uri:client.redirect_uris[0],response_type:'code',resource:issuer+'/mcp',code_challenge_method:'S256',code_challenge:createHash('sha256').update(verifier).digest('base64url')}));
+ const consent={cookie:authorize.headers.get('set-cookie').split(';')[0],origin:issuer};const csrf=/name="csrf" value="([^"]+)"/.exec(await authorize.text())[1];
+ await call('/oauth/start',{csrf},consent);await call('/oauth/complete',{csrf},consent);
+ const code=new URL((await call('/oauth/link/finish',{csrf},consent)).headers.get('location')).searchParams.get('code');
+ const {access_token}=await(await call('/oauth/token',{client_id:client.client_id,grant_type:'authorization_code',redirect_uri:client.redirect_uris[0],resource:issuer+'/mcp',code,code_verifier:verifier})).json();
+ const grantId=store.get('access',digest(access_token)).grantId;
+ const tool=async argv=>(await(await call('/mcp',{jsonrpc:'2.0',id:1,method:'tools/call',params:{name:'aisl',arguments:{argv}}},{Authorization:`Bearer ${access_token}`,Accept:'application/json, text/event-stream'})).json()).result.structuredContent;
+ const missing=await tool(['list']);assert.equal(missing.connectionRequired,true);assert.ok(missing.connect.startsWith(issuer+'/oauth/connect?ticket='));
+ const ticket=new URL(missing.connect).searchParams.get('ticket');
+ // Link previews may GET the page; only the confirmed POST consumes the ticket, and only from this origin.
+ for(let i=0;i<2;i++)assert.match(await(await call(new URL(missing.connect).pathname+new URL(missing.connect).search)).text(),/name="ticket"/);
+ assert.equal((await call('/oauth/connect',{ticket})).status,400);
+ const opened=await call('/oauth/connect',{ticket},{origin:issuer});assert.equal(opened.status,200);
+ const browser={cookie:opened.headers.get('set-cookie').split(';')[0],origin:issuer};const linkCsrf=/name="csrf" value="([^"]+)"/.exec(await opened.text())[1];
+ assert.equal((await call('/oauth/connect',{ticket},{origin:issuer})).status,400);
+ assert.equal(labels.at(-1),'MCP gateway, ChatGPT fixture (confirm aisl)');
+ const before=revoked.length;const confirmed=await call('/oauth/connect/complete',{csrf:linkCsrf},browser);assert.equal(confirmed.status,200);assert.match(await confirmed.text(),/aisl token/);assert.equal(revoked.length,before+1);
+ assert.equal((await call('/oauth/link/start',{csrf:linkCsrf,cli:'dataops'},browser)).status,400);
+ const staticToken=secret();assert.equal((await call('/oauth/link/token',{csrf:linkCsrf,cli:'aisl',token:staticToken},browser)).status,200);
+ const done=await call('/oauth/link/finish',{csrf:linkCsrf},browser);assert.equal(done.status,200);assert.match(await done.text(),/aisl is connected/);
+ assert.equal(store.get('grant',grantId).linked.aisl.token,staticToken);assert.deepEqual(await tool(['list']),{token:staticToken});
+ // A link opened by someone else's account is refused and leaves the grant untouched.
+ const again=await tool(['connect']);assert.equal(again.connected,true);who={id:'synthetic-other',email:'other@example.com'};
+ const other=await call('/oauth/connect',{ticket:new URL(again.connect).searchParams.get('ticket')},{origin:issuer});const otherCsrf=/name="csrf" value="([^"]+)"/.exec(await other.text())[1];
+ assert.equal((await call('/oauth/connect/complete',{csrf:otherCsrf},{cookie:other.headers.get('set-cookie').split(';')[0],origin:issuer})).status,403);
+ assert.equal(store.get('grant',grantId).linked.aisl.token,staticToken);
+});

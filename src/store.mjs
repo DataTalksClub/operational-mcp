@@ -42,6 +42,8 @@ export class Store {
     const row = this.db.prepare('SELECT value,expiry FROM records WHERE kind=? AND id=?').get(kind, id);
     return row && row.expiry > Date.now() ? this.open(kind, id, row.value) : null;
   }
+  // Replaces a live record's value and keeps its expiry.
+  update(kind, id, value) { this.db.prepare('UPDATE records SET value=? WHERE kind=? AND id=? AND expiry > ?').run(this.seal(kind, id, value), kind, id, Date.now()); }
   delete(kind, id) { this.db.prepare('DELETE FROM records WHERE kind=? AND id=?').run(kind, id); }
   transaction(fn) {
     this.db.exec('BEGIN IMMEDIATE');
