@@ -28,11 +28,15 @@ const registrations = [pocketRegistration(pocketTools({store,upstream:remote,vau
 const connections = [];
 if (process.env.MCP_DATAOPS_ORIGIN) {
   const dataops = dataopsUpstream({base:process.env.MCP_DATAOPS_ORIGIN,webOrigin:process.env.MCP_DATAOPS_WEB_ORIGIN || process.env.MCP_DATAOPS_ORIGIN});
-  registrations.push(dataopsRegistration({entrypoint:process.env.MCP_DATAOPS_ENTRYPOINT || new URL('../vendor/dataops.mjs',import.meta.url).pathname,upstream:dataops,runtimeRoot}));
-  connections.push({name:'dataops',auth:dataops});
+  const dataopsReg = dataopsRegistration({entrypoint:process.env.MCP_DATAOPS_ENTRYPOINT || new URL('../vendor/dataops.mjs',import.meta.url).pathname,upstream:dataops,runtimeRoot});
+  registrations.push(dataopsReg);
+  connections.push({name:'dataops',auth:dataops,title:'DataOps',description:dataopsReg.manifest.description});
 }
 for (const registration of loadCliRegistrations(process.env.MCP_CLI_CONFIG_FILE, {runtimeRoot})) {
-  registrations.push(registration); connections.push({name:registration.manifest.namespace,auth:registration.auth});
+  const name = registration.manifest.namespace;
+  const title = name === 'aisl' ? 'AI Shipping Labs' : (name.charAt(0).toUpperCase() + name.slice(1));
+  registrations.push(registration);
+  connections.push({name,auth:registration.auth,title,description:registration.manifest.description});
 }
 const tools = gatewayTools(registrations);
 const app = createApp({ store, upstream: {...remote,kind:'gateway'}, tools, connections, vault, issuer: process.env.MCP_ISSUER,

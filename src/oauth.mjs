@@ -16,7 +16,9 @@ function vaultAssets() {
 // Consent forms end in a 303 to the client's callback, and CSP form-action also governs that redirect,
 // so each transaction page allows exactly its own validated callback origin. Only the unlock page runs
 // script: same-origin files, WebAssembly for Argon2id (hash-wasm inside core), same-origin fetch.
-const consentCsp = (tx, scripts = false) => `default-src 'none'; ${scripts ? "script-src 'self' 'wasm-unsafe-eval'; connect-src 'self'; " : ''}form-action 'self' ${new URL(tx.redirect).origin}; frame-ancestors 'none'; base-uri 'none'`;
+// Inline styles are allowed on these server-rendered pages because every dynamic value is
+// HTML-escaped at its single insertion point; no user or client markup is ever interpolated.
+const consentCsp = (tx, scripts = false) => `default-src 'none'; style-src 'unsafe-inline'; ${scripts ? "script-src 'self' 'wasm-unsafe-eval'; connect-src 'self'; " : ''}form-action 'self' ${new URL(tx.redirect).origin}; frame-ancestors 'none'; base-uri 'none'`;
 export function validRedirect(value) {
   try {
     const u = new URL(value);
@@ -47,7 +49,11 @@ export function installOAuth(app, { store, issuer, upstream, allowedEmails, redi
   rootApp.get([`/.well-known/oauth-protected-resource${prefix}`, `/.well-known/oauth-protected-resource${prefix}/mcp`], (_req, res) => res.json({ resource, authorization_servers: [issuer], scopes_supported: supportedScopes, bearer_methods_supported: ['header'] }));
   rootApp.get(`/.well-known/oauth-authorization-server${prefix}`, (_req, res) => res.json({ issuer, authorization_endpoint: `${issuer}/oauth/authorize`, token_endpoint: `${issuer}/oauth/token`, registration_endpoint: `${issuer}/oauth/register`, revocation_endpoint: `${issuer}/oauth/revoke`, scopes_supported: supportedScopes, response_types_supported: ['code'], grant_types_supported: ['authorization_code', 'refresh_token'], code_challenge_methods_supported: ['S256'], token_endpoint_auth_methods_supported: ['none'], authorization_response_iss_parameter_supported: true }));
   const challenge = (res) => res.set('WWW-Authenticate', `Bearer resource_metadata="${metadataUrl}", scope="${supportedScopes.join(' ')}"`).status(401).json({ error: 'invalid_token' });
-  const page = (res, body, tx = null, scripts = false) => (tx ? res.set('Content-Security-Policy', consentCsp(tx, scripts)) : res).type('html').send(`<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>${upstream.kind} connection</title><body><main><h1>Connect ${html(upstream.kind)}</h1>${body}</main></body></html>`);
+  const brand = 'Operational MCP';
+  // One shared shell for every consent and linking page: readable without any client
+  // stylesheet, since the CSP admits only inline styles and no outside resources.
+  const pageStyle = 'body{font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;line-height:1.5;color:#1a1a1a;background:#fff;margin:0}main{max-width:42rem;margin:2rem auto;padding:0 1rem}h1{font-size:1.6rem}h2{font-size:1.25rem;margin-top:2rem}.app-list{list-style:none;padding:0;display:grid;gap:0.75rem}.app{border:1px solid #c8c8c8;border-radius:0.5rem;padding:0.75rem 1rem}.app h3{margin:0;font-size:1.05rem}.app p{margin:0.3rem 0}.desc{color:#444}.status-connected{color:#0a6b1a;font-weight:bold}.status-missing{color:#8a5a00;font-weight:bold}button{font:inherit;padding:0.35rem 0.9rem;border-radius:0.4rem;border:1px solid #666;background:#f4f4f4;cursor:pointer}button:hover{background:#e6e6e6}input[type=password],input[type=text]{font:inherit;padding:0.3rem 0.5rem;border:1px solid #666;border-radius:0.4rem;max-width:16rem}form{margin:0.5rem 0 0}label{display:block;margin:0.3rem 0}.notice{background:#fff8e1;border:1px solid #e0c36a;border-radius:0.5rem;padding:0.5rem 1rem}.code{font-family:ui-monospace,monospace;font-size:1.1rem;letter-spacing:0.05em}';
+  const page = (res, body, tx = null, scripts = false) => (tx ? res.set('Content-Security-Policy', consentCsp(tx, scripts)) : res).type('html').send(`<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>${brand}</title><style>${pageStyle}</style><body><main><h1>${brand}</h1>${body}</main></body></html>`);
   const txNonce = req => Object.fromEntries((req.headers.cookie || '').split(';').map(x => x.trim().split('=')))[cookieName];
   const transaction = req => { const nonce = txNonce(req); return nonce && store.get('transaction', digest(nonce)); };
   const txCookie = (res, nonce) => res.cookie(cookieName, nonce, { httpOnly: true, secure: issuer.startsWith('https:'), sameSite: 'lax', path: `${prefix}/oauth`, maxAge: 600000 });
@@ -88,7 +94,7 @@ export function installOAuth(app, { store, issuer, upstream, allowedEmails, redi
     try {
       tx.device = await upstream.start(`MCP gateway, ${tx.clientName}`);
       tx.expiry = Math.min(tx.expiry, tx.device.expiry); tx.nextPoll = 0; tx.phase = 'pending'; saveTx(tx);
-      page(res, `<p>Approve code <strong>${html(tx.device.userCode)}</strong> in ${html(upstream.kind)}.</p><p><a href="${html(tx.device.approval)}" target="_blank" rel="noopener noreferrer">Open device approval</a></p><p>After approving, return here and continue. No token needs to be copied.</p><form method="post" action="${prefix}/oauth/complete"><input type="hidden" name="csrf" value="${tx.csrf}"><button>Finish connection</button></form>`, tx);
+      page(res, `<p>Approve code <strong class="code">${html(tx.device.userCode)}</strong> in ${html(upstream.kind === 'gateway' ? 'PocketShell' : upstream.kind)}.</p><p><a href="${html(tx.device.approval)}" target="_blank" rel="noopener noreferrer">Open device approval</a></p><p>After approving, return here and continue. No token needs to be copied.</p><form method="post" action="${prefix}/oauth/complete"><input type="hidden" name="csrf" value="${tx.csrf}"><button>Finish connection</button></form>`, tx);
     } catch { store.delete('transaction', tx.id); fail(res, 'temporarily_unavailable', 503); }
   });
   app.post('/oauth/complete', async (req, res) => {
@@ -115,7 +121,7 @@ export function installOAuth(app, { store, issuer, upstream, allowedEmails, redi
     if (!(error instanceof UpstreamError && ['authorization_pending', 'slow_down'].includes(error.code))) return false;
     if (error.code === 'slow_down') tx.device.interval = Math.min(60, tx.device.interval + 5);
     tx.phase = phase; tx.nextPoll = Date.now() + tx.device.interval * 1000; saveTx(tx);
-    page(res, `<p>Approval is still pending. Wait ${tx.device.interval} seconds, approve in the other tab, then continue.</p><form method="post" action="${prefix}${action}"><input type="hidden" name="csrf" value="${tx.csrf}"><button>Check approval</button></form>`, tx);
+    page(res, `<p class="notice">Approval is still pending. Wait ${tx.device.interval} seconds, approve in the other tab, then continue.</p><form method="post" action="${prefix}${action}"><input type="hidden" name="csrf" value="${tx.csrf}"><button>Check approval</button></form>`, tx);
     return true;
   }
   function finish(req, res, tx, credential) {
@@ -157,7 +163,7 @@ export function installOAuth(app, { store, issuer, upstream, allowedEmails, redi
     try {
       tx.device = await upstream.start(`MCP gateway, ${clientName} (confirm ${ticket.cli})`);
       tx.expiry = Math.min(tx.expiry, tx.device.expiry); tx.nextPoll = 0; tx.phase = 'confirm'; saveTx(tx);
-      page(res, `<p>Confirm it is you: approve code <strong>${html(tx.device.userCode)}</strong>.</p><p><a href="${html(tx.device.approval)}" target="_blank" rel="noopener noreferrer">Open device approval</a></p><p>This approval is only a check and ends immediately afterwards.</p><form method="post" action="${prefix}/oauth/connect/complete"><input type="hidden" name="csrf" value="${tx.csrf}"><button>Continue</button></form>`, tx);
+      page(res, `<p>Confirm it is you: approve code <strong class="code">${html(tx.device.userCode)}</strong>.</p><p><a href="${html(tx.device.approval)}" target="_blank" rel="noopener noreferrer">Open device approval</a></p><p>This approval is only a check and ends immediately afterwards.</p><form method="post" action="${prefix}/oauth/connect/complete"><input type="hidden" name="csrf" value="${tx.csrf}"><button>Continue</button></form>`, tx);
     } catch { store.delete('transaction', tx.id); fail(res, 'temporarily_unavailable', 503); }
   });
   app.post('/oauth/connect/complete', async (req, res) => {
@@ -183,7 +189,7 @@ export function installOAuth(app, { store, issuer, upstream, allowedEmails, redi
     const previous = grant.linked?.[cli];
     store.update('grant', grantId, { ...grant, linked: { ...grant.linked, [cli]: credential } });
     if (previous) await revokeCredentials(null, { [cli]: previous }).catch(() => store.put('revoke', secret(), { linked: { [cli]: previous }, attempts: 0 }, Date.now()));
-    page(res, `<p>${html(cli)} is connected for ${html(tx.clientName)}. Return to your assistant; its next call uses this account.</p>`);
+    page(res, `<p class="status-connected">${html(cli)} is connected for ${html(tx.clientName)}.</p><p>Return to your assistant; its next call uses this account.</p>`);
   }
   async function revokeCredentials(credential, linked = {}) {
     const jobs = [];

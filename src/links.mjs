@@ -9,14 +9,25 @@ export function installLinks(app, { connections, csrf, saveTx, page, prefix, fai
   // the confirmed identity of the grant owner and the one CLI it is for.
   const primary = tx => tx.credential?.identity || tx.identity;
   function show(res, tx, notice = '') {
-    const forms = connections.filter(c => !tx.only || tx.only.includes(c.name)).map(({name,auth}) => {
+    const items = connections.filter(c => !tx.only || tx.only.includes(c.name)).map(c => {
+      const { name, auth } = c;
       const state = tx.linkDevices?.[name];
-      if (tx.linked?.[name]) return `<p>${html(name)}: connected</p>`;
-      if (state) return `<p>${html(name)}: approve <strong>${html(state.userCode)}</strong> on <a href="${html(state.approval)}" target="_blank" rel="noopener noreferrer">its device approval page</a>.</p><form method="post" action="${prefix}/oauth/link/complete">${hidden(tx,name)}<button>Finish ${html(name)} approval</button></form>`;
-      if (auth.type === 'token') return `<form method="post" action="${prefix}/oauth/link/token">${hidden(tx,name)}<label>${html(name)} token <input name="token" type="password" autocomplete="off" required maxlength="8192"></label><button>Connect ${html(name)}</button></form>`;
-      return `<form method="post" action="${prefix}/oauth/link/start">${hidden(tx,name)}<button>Connect ${html(name)} as a gateway device</button></form>`;
+      const title = c.title || name;
+      const desc = c.description ? `<p class="desc">${html(c.description)}</p>` : '';
+      let action = '';
+      if (tx.linked?.[name]) {
+        action = `<p class="status-connected">${html(name)}: connected</p>`;
+      } else if (state) {
+        action = `<p class="notice">Approve code <strong class="code">${html(state.userCode)}</strong> on <a href="${html(state.approval)}" target="_blank" rel="noopener noreferrer">its device approval page</a>.</p><form method="post" action="${prefix}/oauth/link/complete">${hidden(tx,name)}<button>Finish ${html(name)} approval</button></form>`;
+      } else if (auth.type === 'token') {
+        action = `<form method="post" action="${prefix}/oauth/link/token">${hidden(tx,name)}<label>${html(name)} token <input name="token" type="password" autocomplete="off" required maxlength="8192"></label> <button>Connect ${html(name)}</button></form>`;
+      } else {
+        action = `<form method="post" action="${prefix}/oauth/link/start">${hidden(tx,name)}<button>Connect ${html(name)} as a gateway device</button></form>`;
+      }
+      return `<li class="app"><h3>${html(title)}</h3>${desc}${action}</li>`;
     }).join('');
-    return page(res, `<h2>Connect CLI accounts</h2><p>${html(notice)} The gateway stores each credential encrypted. Token entry belongs only on this page, never in chat. Optional accounts can be skipped.</p>${forms}<form method="post" action="${prefix}/oauth/link/finish"><input type="hidden" name="csrf" value="${tx.csrf}"><button>Continue</button></form>`,tx);
+    const noticeHtml = notice ? `<p class="notice">${html(notice)}</p>` : '';
+    return page(res, `<h2>Connect CLI accounts</h2>${noticeHtml}<p>The gateway stores each credential encrypted. Token entry belongs only on this page, never in chat. Optional accounts can be skipped.</p><ul class="app-list">${items}</ul><form method="post" action="${prefix}/oauth/link/finish"><input type="hidden" name="csrf" value="${tx.csrf}"><button>Continue</button></form>`, tx);
   }
   function get(req) {
     const tx = csrf(req); const name = req.body?.cli; const auth = plugins.get(name);
