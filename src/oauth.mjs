@@ -16,9 +16,7 @@ function vaultAssets() {
 // Consent forms end in a 303 to the client's callback, and CSP form-action also governs that redirect,
 // so each transaction page allows exactly its own validated callback origin. Only the unlock page runs
 // script: same-origin files, WebAssembly for Argon2id (hash-wasm inside core), same-origin fetch.
-// Inline styles are allowed on these server-rendered pages because every dynamic value is
-// HTML-escaped at its single insertion point; no user or client markup is ever interpolated.
-const consentCsp = (tx, scripts = false) => `default-src 'none'; style-src 'unsafe-inline'; ${scripts ? "script-src 'self' 'wasm-unsafe-eval'; connect-src 'self'; " : ''}form-action 'self' ${new URL(tx.redirect).origin}; frame-ancestors 'none'; base-uri 'none'`;
+const consentCsp = (tx = null, scripts = false) => `default-src 'none'; style-src 'unsafe-inline'; ${scripts ? "script-src 'self' 'wasm-unsafe-eval'; connect-src 'self'; " : ''}form-action 'self'${tx?.redirect ? ' ' + new URL(tx.redirect).origin : ''}; frame-ancestors 'none'; base-uri 'none'`;
 export function validRedirect(value) {
   try {
     const u = new URL(value);
@@ -53,7 +51,7 @@ export function installOAuth(app, { store, issuer, upstream, allowedEmails, redi
   // One shared shell for every consent and linking page: readable without any client
   // stylesheet, since the CSP admits only inline styles and no outside resources.
   const pageStyle = 'body{font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;line-height:1.5;color:#1a1a1a;background:#fff;margin:0}main{max-width:42rem;margin:2rem auto;padding:0 1rem}h1{font-size:1.6rem}h2{font-size:1.25rem;margin-top:2rem}.app-list{list-style:none;padding:0;display:grid;gap:0.75rem}.app{border:1px solid #c8c8c8;border-radius:0.5rem;padding:0.75rem 1rem}.app h3{margin:0;font-size:1.05rem}.app p{margin:0.3rem 0}.desc{color:#444}.status-connected{color:#0a6b1a;font-weight:bold}.status-missing{color:#8a5a00;font-weight:bold}button{font:inherit;padding:0.35rem 0.9rem;border-radius:0.4rem;border:1px solid #666;background:#f4f4f4;cursor:pointer}button:hover{background:#e6e6e6}input[type=password],input[type=text]{font:inherit;padding:0.3rem 0.5rem;border:1px solid #666;border-radius:0.4rem;max-width:16rem}form{margin:0.5rem 0 0}label{display:block;margin:0.3rem 0}.notice{background:#fff8e1;border:1px solid #e0c36a;border-radius:0.5rem;padding:0.5rem 1rem}.code{font-family:ui-monospace,monospace;font-size:1.1rem;letter-spacing:0.05em}';
-  const page = (res, body, tx = null, scripts = false) => (tx ? res.set('Content-Security-Policy', consentCsp(tx, scripts)) : res).type('html').send(`<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>${brand}</title><style>${pageStyle}</style><body><main><h1>${brand}</h1>${body}</main></body></html>`);
+  const page = (res, body, tx = null, scripts = false) => res.set('Content-Security-Policy', consentCsp(tx, scripts)).type('html').send(`<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>${brand}</title><style>${pageStyle}</style><body><main><h1>${brand}</h1>${body}</main></body></html>`);
   const txNonce = req => Object.fromEntries((req.headers.cookie || '').split(';').map(x => x.trim().split('=')))[cookieName];
   const transaction = req => { const nonce = txNonce(req); return nonce && store.get('transaction', digest(nonce)); };
   const txCookie = (res, nonce) => res.cookie(cookieName, nonce, { httpOnly: true, secure: issuer.startsWith('https:'), sameSite: 'lax', path: `${prefix}/oauth`, maxAge: 600000 });
@@ -81,7 +79,7 @@ export function installOAuth(app, { store, issuer, upstream, allowedEmails, redi
     const tx = { id: digest(nonce), csrf: secret(), clientId: client.client_id, clientName: client.client_name, redirect: q.redirect_uri, state: q.state, challenge: q.code_challenge, resource, scope: q.scope || supportedScopes.join(' '), expiry: Date.now() + 600000, phase: 'consent' };
     saveTx(tx);
     txCookie(res, nonce);
-    page(res, `<p>Client: ${html(client.client_name)}</p><p>Return address: ${html(tx.redirect)}</p><p>This grants the requested CLI commands within your account permissions. Each CLI tool may contain both reads and writes. Write commands require an approval marker. Choose read-only to refuse every write. Approve only a connection you just started.</p><form method="post" action="${prefix}/oauth/start"><input type="hidden" name="csrf" value="${tx.csrf}"><p><label><input type="checkbox" name="read_only" value="1"> Read-only: offer only tools that read, and refuse anything that starts, sends, stops or changes data</label></p><button>Continue to device approval</button></form>`);
+    page(res, `<p>Client: ${html(client.client_name)}</p><p>Return address: ${html(tx.redirect)}</p><p>This grants the requested CLI commands within your account permissions. Each CLI tool may contain both reads and writes. Write commands require an approval marker. Choose read-only to refuse every write. Approve only a connection you just started.</p><form method="post" action="${prefix}/oauth/start"><input type="hidden" name="csrf" value="${tx.csrf}"><p><label><input type="checkbox" name="read_only" value="1"> Read-only: offer only tools that read, and refuse anything that starts, sends, stops or changes data</label></p><button>Continue to device approval</button></form>`, tx);
   });
   app.post('/oauth/start', async (req, res) => {
     const tx = csrf(req);
