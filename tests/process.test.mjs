@@ -26,7 +26,7 @@ test('a timed-out SSH process tree is killed before private files are removed',a
  const {readFile}=await import('node:fs/promises');const pid=Number(await readFile(pidFile,'utf8'));
  for (let attempt=0;;attempt++) {
   try {const status=await readFile(`/proc/${pid}/status`,'utf8');if (/State:\s+Z/.test(status)) break;if(attempt>=50) assert.fail('Child process still running after kill');}
-  catch(error){if(error.code==='ENOENT') break;throw error;}
+  catch(error){if(error.code==='ENOENT'||error.code==='ESRCH') break;throw error;}
   await new Promise(resolve=>setTimeout(resolve,20));
  }
 });
