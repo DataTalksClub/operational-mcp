@@ -1,6 +1,7 @@
-// Real HTTPS + MCP Inspector against the multiplexed gateway (catalog plus one
-// tool per CLI). Upstream account approval is a synthetic fixture; this does
-// not claim an account-level ChatGPT, Claude or Grok Bot acceptance test.
+// Real HTTPS + MCP Inspector against the multiplexed gateway (catalog plus all
+// tools per CLI: pocketshell, dataops, dapier, aisl). Upstream account approval
+// is a synthetic fixture; this does not claim an account-level ChatGPT, Claude
+// or Grok Bot acceptance test.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:https';
@@ -14,10 +15,11 @@ import { createHash, randomBytes } from 'node:crypto';
 import { Store, secret } from '../src/store.mjs';
 import { createApp } from '../src/app.mjs';
 import { gatewayTools } from '../src/registry.mjs';
-import { dataopsRegistration } from '../src/adapters.mjs';
+import { pocketRegistration, dataopsRegistration, cliRegistration, staticTokenAuth } from '../src/adapters.mjs';
+import { pocketTools } from '../src/pocketshell.mjs';
 const execFile = promisify(execFileCallback);
 const inspector = resolve('node_modules/@modelcontextprotocol/inspector/clients/cli/build/index.js');
-test('gateway: real TLS, DCR/PKCE/device bridge and MCP Inspector discovery/call for DataOps', async t => {
+test('gateway: real TLS, DCR/PKCE/device bridge and MCP Inspector discovery/calls for all backends', async t => {
   const dir = await mkdtemp(join(tmpdir(), 'mcp-inspector-gateway-'));
   const keyFile = join(dir, 'key.pem'), certFile = join(dir, 'cert.pem');
   execFileSync('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-keyout', keyFile, '-out', certFile, '-days', '1', '-subj', '/CN=localhost', '-addext', 'subjectAltName=DNS:localhost'], { stdio: 'ignore' });
@@ -33,8 +35,36 @@ test('gateway: real TLS, DCR/PKCE/device bridge and MCP Inspector discovery/call
     poll: async () => credential(), identity: async () => identity, revoke: async () => {},
   };
   const seen = [];
-  const tools = gatewayTools([dataopsRegistration({ entrypoint: join(dir, 'dataops.mjs'), upstream: { base: 'https://portal.example.com' }, runtimeRoot: dir, run: async options => { seen.push(options.argv); return { tasks: [] }; } })]);
-  app = createApp({ store, issuer, upstream: { ...device, kind: 'gateway' }, tools, connections: [{ name: 'dataops', auth: device }], allowedEmails: [identity.email], redirectUris: [] });
+  const pscProfile = { hosts: [{ name: 'hetzner-host', deviceId: 'dev-1', user: 'alexey' }] };
+  store.put('profile', identity.id, pscProfile, Date.now() + 86400000);
+  const pTools = pocketTools({
+    store,
+    upstream: { base: 'https://broker.example.com', gatewayOrigin: 'https://gateway.example.com', devices: async () => [{ id: 'dev-1', presence: 'online', idValid: true }] },
+    execute: async (...args) => { seen.push(['pocketshell', ...args]); return { ok: true }; }
+  });
+  const dapierManifest = JSON.parse(await readFile(resolve('manifests/dapier.json'), 'utf8'));
+  const aislManifest = JSON.parse(await readFile(resolve('manifests/aisl.json'), 'utf8'));
+  const staticAuth = staticTokenAuth();
+
+  const tools = gatewayTools([
+    pocketRegistration(pTools),
+    dataopsRegistration({ entrypoint: join(dir, 'dataops.mjs'), upstream: { base: 'https://portal.example.com' }, runtimeRoot: dir, run: async options => { seen.push(['dataops', ...options.argv]); return { tasks: [] }; } }),
+    cliRegistration({ manifest: dapierManifest, command: process.execPath, prefix: [], mounts: [], runtimeRoot: dir, auth: device, credentials: () => ({ suffix: [], environment: {} }), run: async options => { seen.push(['dapier', ...options.argv]); return { catalog: [] }; } }),
+    cliRegistration({ manifest: aislManifest, command: process.execPath, prefix: [], mounts: [], runtimeRoot: dir, auth: staticAuth, credentials: () => ({ suffix: [], environment: {} }), run: async options => { seen.push(['aisl', ...options.argv]); return { hosts: [] }; } }),
+  ]);
+  app = createApp({
+    store,
+    issuer,
+    upstream: { ...device, kind: 'gateway' },
+    tools,
+    connections: [
+      { name: 'dataops', auth: device },
+      { name: 'dapier', auth: device },
+      { name: 'aisl', auth: staticAuth }
+    ],
+    allowedEmails: [identity.email],
+    redirectUris: []
+  });
   t.after(async () => { server.closeAllConnections(); server.close(); store.close(); await rm(dir, { recursive: true, force: true }); });
   // Trust only this generated test certificate for the HTTP driver; TLS verification stays enabled.
   const { Agent, fetch: tlsFetch } = await import('undici'); const dispatcher = new Agent({ connect: { ca: await readFile(certFile) } }); t.after(() => dispatcher.close());
@@ -49,6 +79,9 @@ test('gateway: real TLS, DCR/PKCE/device bridge and MCP Inspector discovery/call
   assert.equal((await call('/oauth/complete', { csrf }, browser)).status, 200);
   assert.equal((await call('/oauth/link/start', { csrf, cli: 'dataops' }, browser)).status, 200);
   assert.equal((await call('/oauth/link/complete', { csrf, cli: 'dataops' }, browser)).status, 200);
+  assert.equal((await call('/oauth/link/start', { csrf, cli: 'dapier' }, browser)).status, 200);
+  assert.equal((await call('/oauth/link/complete', { csrf, cli: 'dapier' }, browser)).status, 200);
+  assert.equal((await call('/oauth/link/token', { csrf, cli: 'aisl', token: 'synthetic-aisl-token' }, browser)).status, 200);
   const done = await call('/oauth/link/finish', { csrf }, browser); assert.equal(done.status, 303);
   const redirect = new URL(done.headers.get('location'));
   const exchange = await call('/oauth/token', { grant_type: 'authorization_code', client_id: client.client_id, redirect_uri: client.redirect_uris[0], code: redirect.searchParams.get('code'), code_verifier: verifier, resource: issuer + '/mcp' }); assert.equal(exchange.status, 200); const token = await exchange.json();
@@ -58,17 +91,35 @@ test('gateway: real TLS, DCR/PKCE/device bridge and MCP Inspector discovery/call
     catch { assert.fail('Inspector process failed; raw diagnostics suppressed to protect credentials'); }
   };
   const listed = await run(['--method', 'tools/list']); const discovered = JSON.parse(listed.stdout); const names = (discovered.tools || discovered).map(x => x.name).sort();
-  assert.deepEqual(names, ['catalog', 'dataops']);
-  const dataops = (discovered.tools || discovered).find(x => x.name === 'dataops');
-  assert.ok(JSON.stringify(dataops.inputSchema).includes('argv'));
+  assert.deepEqual(names, ['aisl', 'catalog', 'dapier', 'dataops', 'pocketshell']);
+  const dataopsToolDef = (discovered.tools || discovered).find(x => x.name === 'dataops');
+  assert.ok(JSON.stringify(dataopsToolDef.inputSchema).includes('argv'));
+
+  // 1. Catalog tool call via Inspector
   const catalog = JSON.parse((await run(['--method', 'tools/call', '--tool-name', 'catalog'])).stdout);
   assert.equal(catalog.isError || false, false);
-  assert.deepEqual(JSON.parse(catalog.content[0].text).clis.map(x => x.name), ['dataops']);
-  // A fetch-level DataOps read exercises the real manifest argv mapping against the CLI runner.
-  const mcp = (body) => call('/mcp', body, { Authorization: `Bearer ${token.access_token}`, Accept: 'application/json, text/event-stream' });
-  const help = await (await mcp({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'dataops', arguments: { argv: ['help', 'tasks'] } } })).json();
-  assert.ok((help.result.structuredContent.commands || []).some(g => g.command === 'tasks list'));
-  const tasks = await (await mcp({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'dataops', arguments: { argv: ['tasks', 'list', '--mine'] } } })).json();
-  assert.deepEqual(tasks.result.structuredContent, { tasks: [] });
-  assert.deepEqual(seen.at(-1), ['tasks', 'list', '--mine', '--json']);
+  assert.deepEqual(JSON.parse(catalog.content[0].text).clis.map(x => x.name), ['pocketshell', 'dataops', 'dapier', 'aisl']);
+
+  // 2. PocketShell read-only tool call via Inspector
+  const psCall = JSON.parse((await run(['--method', 'tools/call', '--tool-name', 'pocketshell', '--tool-args-json', JSON.stringify({ argv: ['hosts'] })])).stdout);
+  assert.equal(psCall.isError || false, false);
+  assert.deepEqual(JSON.parse(psCall.content[0].text), { hosts: [{ id: 'dev-1', presence: 'online', configured: true, name: 'hetzner-host' }] });
+
+  // 3. DataOps read-only tool call via Inspector
+  const doCall = JSON.parse((await run(['--method', 'tools/call', '--tool-name', 'dataops', '--tool-args-json', JSON.stringify({ argv: ['tasks', 'list', '--mine'] })])).stdout);
+  assert.equal(doCall.isError || false, false);
+  assert.deepEqual(JSON.parse(doCall.content[0].text), { tasks: [] });
+  assert.deepEqual(seen.find(x => x[0] === 'dataops'), ['dataops', 'tasks', 'list', '--mine', '--json']);
+
+  // 4. Dapier read-only tool call via Inspector
+  const dapierCall = JSON.parse((await run(['--method', 'tools/call', '--tool-name', 'dapier', '--tool-args-json', JSON.stringify({ argv: ['catalog'] })])).stdout);
+  assert.equal(dapierCall.isError || false, false);
+  assert.deepEqual(JSON.parse(dapierCall.content[0].text), { catalog: [] });
+  assert.deepEqual(seen.find(x => x[0] === 'dapier'), ['dapier', 'catalog']);
+
+  // 5. AISL read-only tool call via Inspector
+  const aislCall = JSON.parse((await run(['--method', 'tools/call', '--tool-name', 'aisl', '--tool-args-json', JSON.stringify({ argv: ['hosts', 'list'] })])).stdout);
+  assert.equal(aislCall.isError || false, false);
+  assert.deepEqual(JSON.parse(aislCall.content[0].text), { hosts: [] });
+  assert.deepEqual(seen.find(x => x[0] === 'aisl'), ['aisl', 'hosts', 'list']);
 });
